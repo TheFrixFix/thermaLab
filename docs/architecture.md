@@ -35,6 +35,7 @@ and stream settings in `CaptureService` and `CsvLogger`.
 | `flat_field.dart` | Lens shading correction |
 | `lib/probe/` | |
 | `probe_controller.dart` | **Central state**, the largest file: connection, frame loop, stats, measurement points, display settings, preferences |
+| `frame_processor.dart` | `FrameProcessor`: corrected counts, statistics, colour scale, hottest/coldest markers. No Flutter or USB, unit tested |
 | `probe_page.dart` | Diagnostics screen |
 | `lib/render/` | |
 | `scene_painter.dart` | `SceneData`, `SceneMarker`, `ScenePainter`: draws a frame with all overlays |

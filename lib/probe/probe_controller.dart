@@ -20,6 +20,9 @@ import '../t2s/t2s_commands.dart';
 import '../t2s/t2s_frame.dart';
 import '../t2s/temperature_model.dart';
 import '../t2s/tiny1c_commands.dart';
+import 'frame_processor.dart';
+
+export 'frame_processor.dart' show DisplaySource, FrameStats;
 
 /// USB IDs of cameras known to be T2S+ V2 units.
 final Set<String> kKnownV2UsbIds = <String>{
@@ -27,54 +30,9 @@ final Set<String> kKnownV2UsbIds = <String>{
     if (c.revision == HardwareRevision.v2) c.usbId,
 };
 
-enum DisplaySource { temperature, correctedCounts, rawCounts }
-
 String usbId(int vendorId, int productId) =>
     '${vendorId.toRadixString(16).padLeft(4, '0')}:'
     '${productId.toRadixString(16).padLeft(4, '0')}';
-
-/// Statistics of one processed frame.
-class FrameStats {
-  const FrameStats({
-    required this.minCount,
-    required this.maxCount,
-    required this.meanCount,
-    required this.stdDev,
-    required this.centerCount,
-    required this.minTemp,
-    required this.maxTemp,
-    required this.centerTemp,
-    required this.centerTempAlt,
-    required this.pointTempAlt,
-    required this.pointCount,
-    required this.pointTemp,
-    required this.hottest,
-    required this.coldest,
-    required this.nanCount,
-    required this.scaleLow,
-    required this.scaleHigh,
-  });
-
-  final int minCount;
-  final int maxCount;
-  final double meanCount;
-  final double stdDev;
-  final int centerCount;
-  final double minTemp;
-  final double maxTemp;
-  final double centerTemp;
-
-  /// Same spots evaluated with the other [ShutterSource], for comparison.
-  final double centerTempAlt;
-  final double? pointTempAlt;
-  final int? pointCount;
-  final double? pointTemp;
-  final (int, int) hottest;
-  final (int, int) coldest;
-  final int nanCount;
-  final double scaleLow;
-  final double scaleHigh;
-}
 
 class ProbeController extends ChangeNotifier {
   ProbeController() {
@@ -136,9 +94,12 @@ class ProbeController extends ChangeNotifier {
   /// listen to this instead of to every state change.
   final ValueNotifier<int> frameTick = ValueNotifier<int>(0);
 
+  /// Statistics, colour scale and markers of the latest frame.
+  final FrameProcessor _processor = FrameProcessor();
+
   /// Colour scale of the latest frame, in °C.
-  double scaleLow = 0;
-  double scaleHigh = 1;
+  double get scaleLow => _processor.scaleLow;
+  double get scaleHigh => _processor.scaleHigh;
 
   /// Fixed colour scale instead of following the scene.
   bool fixedScale = false;
@@ -160,31 +121,21 @@ class ProbeController extends ChangeNotifier {
   FlatField? flatField;
   bool flatFieldEnabled = true;
 
-  /// Shutter-corrected counts before the lens shading correction, used to
-  /// measure the shading.
-  Uint16List? _preFlatCounts;
-
   /// Flip the thermal image horizontally (after rotation).
   bool mirror = false;
 
   /// Hottest/coldest marker positions in sensor pixels, smoothed so they
   /// glide instead of jumping across evenly warm areas.
-  (double, double)? hotMarker;
-  (double, double)? coldMarker;
-  (int, int)? _hotTarget;
-  (int, int)? _coldTarget;
+  (double, double)? get hotMarker => _processor.hotMarker;
+  (double, double)? get coldMarker => _processor.coldMarker;
 
-  /// A new hottest/coldest pixel takes over only if it beats the current
-  /// one by this much.
-  static const double markerHysteresis = 0.2;
-
-  /// Fraction of the remaining distance a marker moves per frame.
-  static const double markerSmoothing = 0.35;
+  static const double markerHysteresis = FrameProcessor.markerHysteresis;
+  static const double markerSmoothing = FrameProcessor.markerSmoothing;
   ShutterCorrection? correction;
   T2sFrame? frame;
-  Uint16List? processedCounts;
-  TemperatureTable? table;
-  FrameStats? stats;
+  Uint16List? get processedCounts => _processor.processedCounts;
+  TemperatureTable? get table => _processor.table;
+  FrameStats? get stats => _processor.stats;
   ui.Image? image;
   (int, int)? point;
   double fps = 0;
@@ -440,32 +391,12 @@ class ProbeController extends ChangeNotifier {
   }
 
   /// Temperature of the 3x3 neighbourhood around a sensor pixel.
-  double? temperatureAt(int x, int y) {
-    final T2sFrame? f = frame;
-    final Uint16List? counts = processedCounts;
-    final TemperatureTable? t = table;
-    if (f == null || counts == null || t == null) return null;
-    return t.lookup(_spotCount(counts, f.width, f.height, (x, y)));
-  }
+  double? temperatureAt(int x, int y) => _processor.temperatureAt(frame, x, y);
 
   /// Per-pixel temperatures of the latest frame in 1/50 °C (sensor
   /// orientation), -32768 where the model has no value. Used by the web
   /// viewer, which colours the image itself.
-  Int16List? temperatureGrid() {
-    final Uint16List? counts = processedCounts;
-    final TemperatureTable? t = table;
-    if (counts == null || t == null) return null;
-    final Int16List lut = Int16List(kTableSize);
-    for (int c = 0; c < kTableSize; c++) {
-      final double v = t.values[c];
-      lut[c] = v.isNaN ? -32768 : (v * 50).round().clamp(-32767, 32767);
-    }
-    final Int16List out = Int16List(counts.length);
-    for (int i = 0; i < counts.length; i++) {
-      out[i] = lut[counts[i].clamp(0, kTableSize - 1)];
-    }
-    return out;
-  }
+  Int16List? temperatureGrid() => _processor.temperatureGrid();
 
   Future<void> autoConnect() async {
     await refreshDevices();
@@ -633,13 +564,7 @@ class ProbeController extends ChangeNotifier {
     frame = null;
     _correctionAttempted = false;
     _revisionPending = false;
-    hotMarker = null;
-    coldMarker = null;
-    _hotTarget = null;
-    _coldTarget = null;
-    processedCounts = null;
-    table = null;
-    stats = null;
+    _processor.reset();
     image = null;
     correction = null;
     framesReceived = 0;
@@ -973,7 +898,7 @@ class ProbeController extends ChangeNotifier {
       Uint16List? last;
       while (frames.length < 25 && sw.elapsed < const Duration(seconds: 6)) {
         await Future<void>.delayed(const Duration(milliseconds: 40));
-        final Uint16List? c = _preFlatCounts;
+        final Uint16List? c = _processor.preFlatCounts;
         if (c == null || identical(c, last)) continue;
         last = c;
         frames.add(c);
@@ -997,7 +922,7 @@ class ProbeController extends ChangeNotifier {
       String size = '${ff.maxOffset.toStringAsFixed(0)} counts';
       if (t != null && processedCounts != null) {
         final int centre =
-            _spotCount(processedCounts!, f.width, f.height, (f.width ~/ 2, f.height ~/ 2));
+            spotCount(processedCounts!, f.width, f.height, (f.width ~/ 2, f.height ~/ 2));
         final double dT =
             (t.lookup(centre + ff.maxOffset.round()) - t.lookup(centre)).abs();
         if (dT.isFinite) size = '${dT.toStringAsFixed(1)} °C';
@@ -1050,7 +975,7 @@ class ProbeController extends ChangeNotifier {
     final Uint16List? counts = processedCounts;
     if (f == null || counts == null) return;
     final (int, int) at = point ?? (f.width ~/ 2, f.height ~/ 2);
-    final int count = _spotCount(counts, f.width, f.height, at);
+    final int count = spotCount(counts, f.width, f.height, at);
     if (settings.revision == HardwareRevision.v2 && f.meta != null) {
       final double? solved = solveShutterOffset(
         meta: f.meta!,
@@ -1068,7 +993,7 @@ class ProbeController extends ChangeNotifier {
       log('Calibrated: shutterOffset=${solved.toStringAsFixed(2)} '
           'for ${knownCelsius.toStringAsFixed(1)} °C at $at');
     } else {
-      final TemperatureTable t = _tableFor(f, settings.copyWith(userOffset: 0));
+      final TemperatureTable t = tableFor(f, settings.copyWith(userOffset: 0));
       final double current = t.lookup(count);
       if (current.isNaN) {
         log('Calibration failed: model gives no value (NaN).');
@@ -1132,12 +1057,6 @@ class ProbeController extends ChangeNotifier {
     _process(decoded);
   }
 
-  /// Count-to-°C table for a frame: the radiometric model for Xtherm
-  /// cameras, a plain linear table for cameras that deliver temperatures.
-  TemperatureTable _tableFor(T2sFrame f, ModelSettings s) => f.meta == null
-      ? TemperatureTable.linear(s)
-      : TemperatureTable.build(f.meta!, f.profile!, s);
-
   void _process(T2sFrame f) {
     // While the shutter is closed the picture shows only the shutter; keep
     // the last image on screen like commercial cameras do.
@@ -1147,114 +1066,27 @@ class ProbeController extends ChangeNotifier {
     }
     _shutterReleased.stop();
     _maybeReNuc(f);
-    final TemperatureTable t = _tableFor(f, settings);
-    table = t;
-    final bool useCorrection =
-        settings.revision == HardwareRevision.v2 && correction != null;
-    // Anchor the closed-shutter level where the model expects the shutter
-    // temperature, instead of at the drifting reference mean.
-    Uint16List counts = useCorrection
-        ? correction!.apply(
-            f.counts,
-            level: anchorToModel ? t.shutterLevel : null,
-          )
-        : f.counts;
-    _preFlatCounts = counts;
-    final FlatField? ff = flatField;
-    if (flatFieldEnabled &&
-        ff != null &&
-        ff.width == f.width &&
-        ff.height == f.height) {
-      counts = ff.apply(counts);
-    }
-    processedCounts = counts;
-    final TemperatureTable alt = f.meta == null
-        ? t
-        : TemperatureTable.build(
-            f.meta!,
-            f.profile!,
-            settings.copyWith(
-              shutterSource: settings.shutterSource == ShutterSource.register
-                  ? ShutterSource.fpa
-                  : ShutterSource.register,
-            ),
-          );
-
-    final int n = f.width * f.height;
-    int minC = 1 << 30;
-    int maxC = -1;
-    int minI = 0;
-    int maxI = 0;
-    double sum = 0;
-    double sumSq = 0;
-    final Uint32List histogram = Uint32List(kTableSize);
-    for (int i = 0; i < n; i++) {
-      final int v = counts[i].clamp(0, kTableSize - 1);
-      histogram[v]++;
-      sum += v;
-      sumSq += v.toDouble() * v;
-      if (v < minC) {
-        minC = v;
-        minI = i;
-      }
-      if (v > maxC) {
-        maxC = v;
-        maxI = i;
-      }
-    }
-    final double mean = sum / n;
-    final double std = math.sqrt(math.max(0, sumSq / n - mean * mean));
-
-    // Robust display range: 0.5 % / 99.5 % percentiles of the counts.
-    final int lowCount = _percentile(histogram, n, 0.005);
-    final int highCount = _percentile(histogram, n, 0.995);
-
-    final (int, int) center = (f.width ~/ 2, f.height ~/ 2);
-    final int centerCount = _spotCount(counts, f.width, f.height, center);
-    int? pointCount;
-    if (point != null) {
-      pointCount = _spotCount(counts, f.width, f.height, point!);
-    }
-
-    final bool showTemp =
-        displaySource == DisplaySource.temperature &&
-        !t.lookup(centerCount).isNaN;
-    double low = t.lookup(lowCount);
-    double high = t.lookup(highCount);
-    if (low > high) (low, high) = (high, low);
-    if (fixedScale && fixedMax > fixedMin) {
-      low = fixedMin;
-      high = fixedMax;
-    } else if (high - low < minSpan) {
-      final double mid = (high + low) / 2;
-      low = mid - minSpan / 2;
-      high = mid + minSpan / 2;
-    }
-    scaleLow = low;
-    scaleHigh = high;
-    _trackExtremes(counts, f.width, t, maxI, minI);
-
-    stats = FrameStats(
-      minCount: minC,
-      maxCount: maxC,
-      meanCount: mean,
-      stdDev: std,
-      centerCount: centerCount,
-      minTemp: t.lookup(minC),
-      maxTemp: t.lookup(maxC),
-      centerTemp: t.lookup(centerCount),
-      centerTempAlt: alt.lookup(centerCount),
-      pointTempAlt: pointCount == null ? null : alt.lookup(pointCount),
-      pointCount: pointCount,
-      pointTemp: pointCount == null ? null : t.lookup(pointCount),
-      hottest: (maxI % f.width, maxI ~/ f.width),
-      coldest: (minI % f.width, minI ~/ f.width),
-      nanCount: t.nanCount,
-      scaleLow: showTemp ? low : lowCount.toDouble(),
-      scaleHigh: showTemp ? high : highCount.toDouble(),
+    final ({Uint16List shown, bool byTemperature}) result = _processor.process(
+      f,
+      settings: settings,
+      correction: correction,
+      anchorToModel: anchorToModel,
+      flatField: flatField,
+      flatFieldEnabled: flatFieldEnabled,
+      point: point,
+      displaySource: displaySource,
+      scale: (
+        fixedScale: fixedScale,
+        fixedMin: fixedMin,
+        fixedMax: fixedMax,
+        minSpan: minSpan,
+      ),
     );
 
     if (framesReceived % 75 == 0) {
+      final TemperatureTable t = table!;
+      final FrameStats s = stats!;
+      final Uint16List counts = processedCounts!;
       final int ticksNow = frameTick.value;
       final T2sMetadata? meta = f.meta;
       final String detail = meta == null
@@ -1268,79 +1100,26 @@ class ProbeController extends ChangeNotifier {
                 'eps=${meta.emissivity.toStringAsFixed(3)} ';
       debugPrint('[probe] stats fps=${fps.toStringAsFixed(1)} '
           'rendered=${frameTick.value - _ticksAtLastStats} '
-          'mean=${mean.toStringAsFixed(0)} std=${std.toStringAsFixed(1)} '
+          'mean=${s.meanCount.toStringAsFixed(0)} std=${s.stdDev.toStringAsFixed(1)} '
           'structure=${blockStdDev(counts, f.width, f.height).toStringAsFixed(1)} '
-          'centre=${t.lookup(centerCount).toStringAsFixed(2)}C '
-          'centreAlt=${alt.lookup(centerCount).toStringAsFixed(2)}C '
-          'min=${t.lookup(minC).toStringAsFixed(1)} '
-          'max=${t.lookup(maxC).toStringAsFixed(1)} '
+          'centre=${s.centerTemp.toStringAsFixed(2)}C '
+          'centreAlt=${s.centerTempAlt.toStringAsFixed(2)}C '
+          'min=${s.minTemp.toStringAsFixed(1)} '
+          'max=${s.maxTemp.toStringAsFixed(1)} '
           '$detail'
           'corr=${correction != null} rev=${settings.revision.name}');
       _ticksAtLastStats = ticksNow;
     }
 
-    final Uint16List shown = displaySource == DisplaySource.rawCounts
-        ? f.counts
-        : counts;
-    _render(shown, f.width, f.height, t, showTemp, low, high);
-  }
-
-  /// Moves the hottest/coldest markers: a new extreme only takes over when
-  /// it beats the current spot by [markerHysteresis], and the drawn
-  /// position glides towards its target.
-  void _trackExtremes(
-    Uint16List counts,
-    int width,
-    TemperatureTable t,
-    int maxIndex,
-    int minIndex,
-  ) {
-    double tempAt((int, int) p) => t.lookup(counts[p.$2 * width + p.$1]);
-    final (int, int) newHot = (maxIndex % width, maxIndex ~/ width);
-    final (int, int) newCold = (minIndex % width, minIndex ~/ width);
-    final (int, int)? hot = _hotTarget;
-    if (hot == null || tempAt(newHot) - tempAt(hot) > markerHysteresis) {
-      _hotTarget = newHot;
-    }
-    final (int, int)? cold = _coldTarget;
-    if (cold == null || tempAt(cold) - tempAt(newCold) > markerHysteresis) {
-      _coldTarget = newCold;
-    }
-    hotMarker = _glide(hotMarker, _hotTarget!);
-    coldMarker = _glide(coldMarker, _coldTarget!);
-  }
-
-  static (double, double) _glide((double, double)? from, (int, int) to) {
-    if (from == null) return (to.$1.toDouble(), to.$2.toDouble());
-    return (
-      from.$1 + (to.$1 - from.$1) * markerSmoothing,
-      from.$2 + (to.$2 - from.$2) * markerSmoothing,
+    _render(
+      result.shown,
+      f.width,
+      f.height,
+      table!,
+      result.byTemperature,
+      scaleLow,
+      scaleHigh,
     );
-  }
-
-  int _percentile(Uint32List histogram, int total, double q) {
-    final int target = (total * q).round();
-    int acc = 0;
-    for (int i = 0; i < histogram.length; i++) {
-      acc += histogram[i];
-      if (acc > target) return i;
-    }
-    return histogram.length - 1;
-  }
-
-  /// Mean count of the 3x3 neighbourhood around [at].
-  int _spotCount(Uint16List counts, int w, int h, (int, int) at) {
-    int sum = 0;
-    int k = 0;
-    for (int dy = -1; dy <= 1; dy++) {
-      for (int dx = -1; dx <= 1; dx++) {
-        final int x = (at.$1 + dx).clamp(0, w - 1);
-        final int y = (at.$2 + dy).clamp(0, h - 1);
-        sum += counts[y * w + x];
-        k++;
-      }
-    }
-    return sum ~/ k;
   }
 
   void _render(
