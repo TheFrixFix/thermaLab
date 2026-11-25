@@ -1,5 +1,4 @@
 import 'dart:async';
-import 'dart:convert';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
@@ -16,6 +15,7 @@ import '../t2s/shutter_correction.dart';
 import '../t2s/t2s_commands.dart';
 import '../t2s/t2s_frame.dart';
 import '../t2s/temperature_model.dart';
+import 'calibration_store.dart';
 import 'camera_connection.dart';
 import 'frame_processor.dart';
 import 'measure_point.dart';
@@ -116,8 +116,16 @@ class ProbeController extends ChangeNotifier {
   double get scaleLow => _processor.scaleLow;
   double get scaleHigh => _processor.scaleHigh;
 
+  /// Lens shading and one-point calibration, per camera.
+  late final CalibrationStore _calibration = CalibrationStore(
+    state: _state,
+    connection: _connection,
+    shutter: _shutter,
+    processor: _processor,
+  );
+
   /// Lens shading correction measured on a uniform surface (per camera).
-  FlatField? flatField;
+  FlatField? get flatField => _calibration.flatField;
 
   /// Hottest/coldest marker positions in sensor pixels, smoothed so they
   /// glide instead of jumping across evenly warm areas.
@@ -239,7 +247,7 @@ class ProbeController extends ChangeNotifier {
       _shutter.prepareFor(family, knownModel);
       if (!await _connection.startStream()) return;
       _shutter.streamStarted();
-      await _loadCalibration();
+      await _calibration.load();
       status = 'Streaming';
       notifyListeners();
 
@@ -264,7 +272,7 @@ class ProbeController extends ChangeNotifier {
     if (!streaming) return;
     if (_shutter.revisionPending) {
       _shutter.detectRevision();
-      await _loadCalibration();
+      await _calibration.load();
     }
     await _shutter.correctAfterConnect();
   }
@@ -314,13 +322,13 @@ class ProbeController extends ChangeNotifier {
   void setRevision(HardwareRevision revision) {
     settings = settings.copyWith(revision: revision);
     log('Model revision set to ${revision.name}');
-    _loadCalibration();
+    _calibration.load();
   }
 
   void setShutterSource(ShutterSource source) {
     settings = settings.copyWith(shutterSource: source);
     log('Shutter temperature source: ${source.name}');
-    _loadCalibration();
+    _calibration.load();
   }
 
   void setDisplaySource(DisplaySource source) =>
@@ -335,173 +343,18 @@ class ProbeController extends ChangeNotifier {
     notifyListeners();
   }
 
-  String get _calibrationKey {
-    final UvcUsbDevice? d = device;
-    final String unit = d == null
-        ? 'unknown'
-        : '${usbId(d.vendorId, d.productId)}.${d.serialNumber}';
-    return 'calibration.$unit.${settings.revision.name}.'
-        '${settings.shutterSource.name}';
-  }
-
-  String get _flatFieldKey {
-    final UvcUsbDevice? d = device;
-    return d == null
-        ? 'flatField.unknown'
-        : 'flatField.${usbId(d.vendorId, d.productId)}.${d.serialNumber}';
-  }
-
-  Future<void> _loadFlatField() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? json = prefs.getString(_flatFieldKey);
-    flatField = null;
-    if (json == null) return;
-    final Map<String, dynamic> m = jsonDecode(json) as Map<String, dynamic>;
-    flatField = FlatField.fromCoefficients(
-      (m['w'] as num).toInt(),
-      (m['h'] as num).toInt(),
-      <double>[for (final Object? v in m['c'] as List<dynamic>) (v! as num).toDouble()],
-    );
-    log('Loaded lens shading correction');
-  }
-
-  Future<void> resetFlatField() async {
-    flatField = null;
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.remove(_flatFieldKey);
-    log('Lens shading correction removed');
-  }
+  Future<void> resetFlatField() => _calibration.resetFlatField();
 
   /// Measures the lens shading on a uniform surface. Returns a message for
   /// the user.
-  Future<String> calibrateFlatField() async {
-    if (!streaming || frame == null) return 'No camera image';
-    if (settings.revision == HardwareRevision.v2) {
-      await runShutterCorrection();
-      await Future<void>.delayed(const Duration(milliseconds: 1200));
-    }
-    busy = true;
-    status = 'Measuring lens shading…';
-    notifyListeners();
-    try {
-      final List<Uint16List> frames = <Uint16List>[];
-      final Stopwatch sw = Stopwatch()..start();
-      Uint16List? last;
-      while (frames.length < 25 && sw.elapsed < const Duration(seconds: 6)) {
-        await Future<void>.delayed(const Duration(milliseconds: 40));
-        final Uint16List? c = _processor.preFlatCounts;
-        if (c == null || identical(c, last)) continue;
-        last = c;
-        frames.add(c);
-      }
-      final T2sFrame? f = frame;
-      if (frames.length < 10 || f == null) return 'Not enough frames';
-      final FlatField? ff = FlatField.fit(frames, f.width, f.height);
-      if (ff == null) return 'Could not fit the shading';
-      flatField = ff;
-      final SharedPreferences prefs = await SharedPreferences.getInstance();
-      await prefs.setString(
-        _flatFieldKey,
-        jsonEncode(<String, Object>{
-          'w': ff.width,
-          'h': ff.height,
-          'c': ff.coefficients,
-        }),
-      );
-      // Express the correction in °C around the current centre level.
-      final TemperatureTable? t = table;
-      String size = '${ff.maxOffset.toStringAsFixed(0)} counts';
-      if (t != null && processedCounts != null) {
-        final int centre =
-            spotCount(processedCounts!, f.width, f.height, (f.width ~/ 2, f.height ~/ 2));
-        final double dT =
-            (t.lookup(centre + ff.maxOffset.round()) - t.lookup(centre)).abs();
-        if (dT.isFinite) size = '${dT.toStringAsFixed(1)} °C';
-      }
-      log('Lens shading measured from ${frames.length} frames, '
-          'largest correction $size');
-      return 'Lens shading corrected (up to $size at the edges)';
-    } finally {
-      busy = false;
-      status = 'Streaming';
-      notifyListeners();
-    }
-  }
-
-  Future<void> _loadCalibration() async {
-    await _loadFlatField();
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    final String? json = prefs.getString(_calibrationKey);
-    double shutterOffset = 0;
-    double userOffset = 0;
-    if (json != null) {
-      final Map<String, dynamic> m = jsonDecode(json) as Map<String, dynamic>;
-      shutterOffset = (m['shutterOffset'] as num?)?.toDouble() ?? 0;
-      userOffset = (m['userOffset'] as num?)?.toDouble() ?? 0;
-      log('Loaded calibration: shutterOffset=$shutterOffset '
-          'userOffset=$userOffset');
-    }
-    settings = settings.copyWith(
-      shutterOffset: shutterOffset,
-      userOffset: userOffset,
-    );
-    notifyListeners();
-  }
-
-  Future<void> _saveCalibration() async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString(
-      _calibrationKey,
-      jsonEncode(<String, double>{
-        'shutterOffset': settings.shutterOffset,
-        'userOffset': settings.userOffset,
-      }),
-    );
-  }
+  Future<String> calibrateFlatField() => _calibration.calibrateFlatField();
 
   /// One-point calibration: makes the measured spot (tap point, else the
   /// centre) read [knownCelsius].
-  Future<void> calibrateTo(double knownCelsius) async {
-    final T2sFrame? f = frame;
-    final Uint16List? counts = processedCounts;
-    if (f == null || counts == null) return;
-    final (int, int) at = point ?? (f.width ~/ 2, f.height ~/ 2);
-    final int count = spotCount(counts, f.width, f.height, at);
-    if (settings.revision == HardwareRevision.v2 && f.meta != null) {
-      final double? solved = solveShutterOffset(
-        meta: f.meta!,
-        profile: f.profile!,
-        settings: settings,
-        count: count,
-        targetCelsius: knownCelsius,
-      );
-      if (solved == null) {
-        log('Calibration failed: model gives no value (NaN). '
-            'Write default parameters first.');
-        return;
-      }
-      settings = settings.copyWith(shutterOffset: solved, userOffset: 0);
-      log('Calibrated: shutterOffset=${solved.toStringAsFixed(2)} '
-          'for ${knownCelsius.toStringAsFixed(1)} °C at $at');
-    } else {
-      final TemperatureTable t = tableFor(f, settings.copyWith(userOffset: 0));
-      final double current = t.lookup(count);
-      if (current.isNaN) {
-        log('Calibration failed: model gives no value (NaN).');
-        return;
-      }
-      settings = settings.copyWith(userOffset: knownCelsius - current);
-      log('Calibrated: userOffset=${settings.userOffset.toStringAsFixed(2)}');
-    }
-    await _saveCalibration();
-    notifyListeners();
-  }
+  Future<void> calibrateTo(double knownCelsius) =>
+      _calibration.calibrateTo(knownCelsius, point);
 
-  Future<void> resetCalibration() async {
-    settings = settings.copyWith(shutterOffset: 0, userOffset: 0);
-    await _saveCalibration();
-    log('Calibration reset');
-  }
+  Future<void> resetCalibration() => _calibration.resetCalibration();
 
   // ---------------------------------------------------------------------
   // Frame loop
