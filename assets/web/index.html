@@ -604,10 +604,14 @@ function drawSimpleScale(h, unit, layout, where) {
   const total = above + pillH + barH + pillH + below;
   const pos = place(layout.scaleX ?? 1, layout.scaleY ?? 0.5, w, total, 6 * unit);
   const right = pos.x + w, by = pos.y + above + pillH;
-  // Plate whose right edge is at x and vertical centre at y.
-  const plate = (text, x, y, pw, ph, size) => {
+  // Plate whose right edge is at x and vertical centre at y; corners that
+  // meet the bar ([top right, bottom right]) are square.
+  const plate = (text, x, y, pw, ph, size, square = [false, false]) => {
     ctx.fillStyle = 'rgba(0,0,0,.7)';
-    roundRect(x - pw, y - ph / 2, pw, ph, radius); ctx.fill();
+    ctx.beginPath();
+    ctx.roundRect(x - pw, y - ph / 2, pw, ph,
+      [radius, square[0] ? 0 : radius, square[1] ? 0 : radius, radius]);
+    ctx.fill();
     ctx.font = font(size); ctx.fillStyle = '#fff';
     ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
     ctx.fillText(text, x - pw / 2, y);
@@ -620,10 +624,10 @@ function drawSimpleScale(h, unit, layout, where) {
   ctx.fillStyle = g;
   roundRect(right - barW, by, barW, barH, 0); ctx.fill();
   ctx.lineWidth = unit; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.stroke();
-  plate(hi, right, pos.y + above + pillH / 2, pillW, pillH, limitSize);
-  plate(lo, right, by + barH + pillH / 2, pillW, pillH, limitSize);
+  plate(hi, right, pos.y + above + pillH / 2, pillW, pillH, limitSize, [false, true]);
+  plate(lo, right, by + barH + pillH / 2, pillW, pillH, limitSize, [true, false]);
   if (!hasUnit) return;
-  if (where === 'side') plate('°C', right - barW, by + barH / 2, uw, uh, unitSize);
+  if (where === 'side') plate('°C', right - barW, by + barH / 2, uw, uh, unitSize, [true, true]);
   else if (where === 'above') plate('°C', right, pos.y + uh / 2, uw, uh, unitSize);
   else plate('°C', right, pos.y + total - uh / 2, uw, uh, unitSize);
 }

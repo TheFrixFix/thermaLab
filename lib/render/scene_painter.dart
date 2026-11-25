@@ -518,16 +518,31 @@ void _paintScale(Canvas canvas, Size size, SceneData data, double unit) {
 }
 
 /// A text on a dark plate with slightly rounded corners, as used by the
-/// simple colour bar.
+/// simple colour bar. Corners that meet the bar are square.
 class _Pill {
-  _Pill(this.text, this.rect, this.radius);
+  _Pill(
+    this.text,
+    this.rect,
+    this.radius, {
+    this.squareTopRight = false,
+    this.squareBottomRight = false,
+  });
   final TextPainter text;
   final Rect rect;
   final double radius;
+  final bool squareTopRight;
+  final bool squareBottomRight;
 
   void paint(Canvas canvas) {
+    final Radius r = Radius.circular(radius);
     canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, Radius.circular(radius)),
+      RRect.fromRectAndCorners(
+        rect,
+        topLeft: r,
+        bottomLeft: r,
+        topRight: squareTopRight ? Radius.zero : r,
+        bottomRight: squareBottomRight ? Radius.zero : r,
+      ),
       Paint()..color = const Color(0xB3000000),
     );
     text.paint(canvas, rect.center - Offset(text.width / 2, text.height / 2));
@@ -612,7 +627,8 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
     pillW,
     pillH,
   );
-  _Pill? unitPillAt(double rightEdge, double centreY) => unitText == null
+  _Pill? unitPillAt(double rightEdge, double centreY, {bool atBar = false}) =>
+      unitText == null
       ? null
       : _Pill(
           unitText,
@@ -623,9 +639,11 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
             unitPill.height,
           ),
           radius,
+          squareTopRight: atBar,
+          squareBottomRight: atBar,
         );
   final _Pill? unitP = switch (where) {
-    ScaleUnit.side => unitPillAt(bar.left, bar.center.dy),
+    ScaleUnit.side => unitPillAt(bar.left, bar.center.dy, atBar: true),
     ScaleUnit.above => unitPillAt(right, box.top + unitPill.height / 2),
     ScaleUnit.below => unitPillAt(right, box.bottom - unitPill.height / 2),
     ScaleUnit.inPills || ScaleUnit.hidden => null,
@@ -633,8 +651,8 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
   return _SimpleScaleGeometry(
     box,
     bar,
-    _Pill(highText, highRect, radius),
-    _Pill(lowText, lowRect, radius),
+    _Pill(highText, highRect, radius, squareBottomRight: true),
+    _Pill(lowText, lowRect, radius, squareTopRight: true),
     unitP,
   );
 }
