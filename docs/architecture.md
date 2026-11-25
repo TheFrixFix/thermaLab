@@ -19,8 +19,40 @@ VisibleCamera + OverlayEngine   phone-camera overlay, switched off
 
 Everything visible is drawn from one `SceneData`, so screen, photo, video and
 stream always match. Settings persist through `shared_preferences`: display
-and camera settings in `ProbeController`, capture, log
-and stream settings in `CaptureService` and `CsvLogger`.
+settings in `ViewSettings`, calibration in `CalibrationStore`, the automatic
+shutter switch in `ShutterControl`, capture, log and stream settings in
+`CaptureService` and `CsvLogger`.
+
+### Inside `ProbeController`
+
+`ProbeController` is the only class the rest of the app uses. It is a thin
+`ChangeNotifier` that owns the parts in `lib/probe/`, forwards its public
+members to them and runs the two sequences that need several parts:
+
+```
+CameraConnection ──T2sFrame──▶ ShutterControl ──▶ FrameProcessor ──▶ ui.Image
+ (poll, decode)                 hides frames         counts, stats,      built in
+                                while closed,        scale, markers      ProbeController
+                                re-corrects
+```
+
+- Frame loop: `CameraConnection` decodes each frame and hands it to the
+  controller. `ShutterControl` drops it while the shutter is closed and starts
+  an automatic correction when due. `FrameProcessor` computes counts,
+  statistics and markers from the shutter reference, lens shading and display
+  settings, and the controller builds the picture and tells capture and
+  streaming that a new frame is ready.
+- Connect: open the device and choose the stream (`CameraConnection`), set up
+  the revision (`ShutterControl`), start the stream, load calibration
+  (`CalibrationStore`), then for Xtherm cameras detect an unknown revision and
+  take the first shutter reference.
+
+The parts share model settings, the busy flag, the status line and the log
+through `ProbeState`, and take each other in their constructors (connection ←
+shutter ← calibration), so each file can be read on its own.
+`FrameProcessor` and the revision check in `shutter_control.dart` are unit
+tested: they need neither Flutter nor USB. The rest needs the camera, since
+`CameraConnection` opens the native plugin when created.
 
 ## Files
 
@@ -34,7 +66,7 @@ and stream settings in `CaptureService` and `CsvLogger`.
 | `shutter_correction.dart` | V2 software shutter (non-uniformity) correction |
 | `flat_field.dart` | Lens shading correction |
 | `lib/probe/` | |
-| `probe_controller.dart` | **Central state**, the largest file: connection, frame loop, stats, measurement points, display settings, preferences |
+| `probe_controller.dart` | **Central state**: `ProbeController`, the facade the app uses. Owns the parts below, runs connect and the frame loop, builds the picture |
 | `probe_state.dart` | `ProbeState`: model settings, busy flag, status line and log, shared by the parts below so they need not know `ProbeController` |
 | `camera_connection.dart` | `CameraConnection`: USB device list, opening a camera and choosing its stream, frame polling and decoding, camera commands |
 | `shutter_control.dart` | `ShutterControl`: V2 shutter correction, automatic repetition as the camera drifts, hiding frames while the shutter is closed, V1/V2 detection for unknown cameras |
@@ -63,15 +95,23 @@ and stream settings in `CaptureService` and `CsvLogger`.
 | `assets/web/index.html` | Browser viewer, one file, no external resources |
 | `android/app/src/main/kotlin/…/` | `MainActivity.kt` (channel), `VideoEncoder.kt` (H.264) |
 | `packages/flutter_ffi_uvc/` | Vendored libuvc plugin; changes listed in its `FORK.md` |
-| `test/` | Unit tests, mostly for `lib/t2s/` and `lib/render/`; `t2s_fixture.dart` builds fake frames |
+| `test/` | Unit tests, mostly for `lib/t2s/`, `lib/render/` and `frame_processor.dart`; `t2s_fixture.dart` builds fake frames |
 | `tools/make_icon.py` | Generates the app icon |
 
 ## Where to change things
 
 - New camera model: `camera_catalog.dart`, then [cameras.md](cameras.md).
-- New display setting: state and preference in `probe_controller.dart`,
+- New display setting: state, preference and settings key in
+  `view_settings.dart`, a forwarding getter in `probe_controller.dart`,
   drawing in `scene_painter.dart`, control in `edit_panel.dart`, remote
   `set` key in `capture_service.dart` and `assets/web/index.html`.
+- Statistics, colour scale, hottest/coldest markers: `frame_processor.dart`,
+  with tests in `test/frame_processor_test.dart`.
+- Shutter correction or its timing: `shutter_control.dart`.
+- Lens shading or one-point calibration: `calibration_store.dart`. Its
+  preference keys hold users' calibrations; do not rename them.
+- USB, stream choice, camera commands: `camera_connection.dart`; the order of
+  the connect steps is in `probe_controller.dart`.
 - New marker or overlay element: `SceneData` and `ScenePainter`, layout in
   `scene_layout.dart`.
 - New remote command: `capture_service.dart` (handler) and

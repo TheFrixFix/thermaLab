@@ -28,6 +28,10 @@ export 'camera_connection.dart' show kKnownV2UsbIds, usbId;
 export 'frame_processor.dart' show DisplaySource, FrameStats;
 export 'measure_point.dart' show MeasurePoint;
 
+/// The app's central state, used by every screen and by capture. Owns
+/// the parts below, wires them together (the connect sequence, the frame
+/// loop) and notifies listeners. Public members forward to the parts, so
+/// callers need only this class.
 class ProbeController extends ChangeNotifier {
   ProbeController() {
     _deviceEventsSub = _connection.camera.deviceEvents.listen((UvcDeviceEvent event) {
@@ -51,8 +55,67 @@ class ProbeController extends ChangeNotifier {
   StreamSubscription<UvcDeviceEvent>? _deviceEventsSub;
   StreamSubscription<UvcStreamError>? _streamErrorSub;
 
+  // ---------------------------------------------------------------------
+  // Parts
+  // ---------------------------------------------------------------------
+
   /// Model settings, busy flag, status line and log, shared by the parts.
   late final ProbeState _state = ProbeState(notify: notifyListeners);
+
+  /// USB devices, the open camera, frame polling and commands.
+  late final CameraConnection _connection = CameraConnection(
+    state: _state,
+    onFrame: _process,
+  );
+
+  /// Shutter correction, its automatic repetition and revision detection.
+  late final ShutterControl _shutter = ShutterControl(
+    state: _state,
+    connection: _connection,
+    dropImage: () => image = null,
+  );
+
+  /// Statistics, colour scale and markers of the latest frame.
+  final FrameProcessor _processor = FrameProcessor();
+
+  /// Lens shading and one-point calibration, per camera.
+  late final CalibrationStore _calibration = CalibrationStore(
+    state: _state,
+    connection: _connection,
+    shutter: _shutter,
+    processor: _processor,
+  );
+
+  /// Display settings and their preferences.
+  late final ViewSettings _view = ViewSettings(
+    notify: notifyListeners,
+    setAutoShutter: setAutoShutter,
+  );
+
+  /// User measurement points in sensor coordinates.
+  final MeasurePoints _points = MeasurePoints();
+
+  // ---------------------------------------------------------------------
+  // Own state
+  // ---------------------------------------------------------------------
+
+  /// Latest picture, built from the processed frame.
+  ui.Image? image;
+
+  /// Tap point for the spot reading and the one-point calibration.
+  (int, int)? point;
+
+  /// Incremented whenever a new [image] is ready; capture and streaming
+  /// listen to this instead of to every state change.
+  final ValueNotifier<int> frameTick = ValueNotifier<int>(0);
+
+  int _ticksAtLastStats = 0;
+  bool _rendering = false;
+
+  // ---------------------------------------------------------------------
+  // Shared state and log
+  // ---------------------------------------------------------------------
+
   ModelSettings get settings => _state.settings;
   set settings(ModelSettings value) => _state.settings = value;
   bool get busy => _state.busy;
@@ -62,11 +125,10 @@ class ProbeController extends ChangeNotifier {
   List<String> get logLines => _state.logLines;
   void log(String message) => _state.log(message);
 
-  /// USB devices, the open camera, frame polling and commands.
-  late final CameraConnection _connection = CameraConnection(
-    state: _state,
-    onFrame: _process,
-  );
+  // ---------------------------------------------------------------------
+  // Connection and commands
+  // ---------------------------------------------------------------------
+
   List<UvcUsbDevice> get devices => _connection.devices;
   UvcUsbDevice? get device => _connection.device;
   List<UvcCameraMode> get modes => _connection.modes;
@@ -82,74 +144,25 @@ class ProbeController extends ChangeNotifier {
   int get undecodableFrames => _connection.undecodableFrames;
   String get lastFrameInfo => _connection.lastFrameInfo;
 
-  /// Display settings and their preferences.
-  late final ViewSettings _view = ViewSettings(
-    notify: notifyListeners,
-    setAutoShutter: setAutoShutter,
-  );
-  DisplaySource get displaySource => _view.displaySource;
-  Palette get palette => _view.palette;
-  int get quarterTurns => _view.quarterTurns;
-  double get minSpan => _view.minSpan;
-  bool get fixedScale => _view.fixedScale;
-  double get fixedMin => _view.fixedMin;
-  double get fixedMax => _view.fixedMax;
-  SceneLayout get layout => _view.layout;
-  int get viewTurns => _view.viewTurns;
-  int get labelOutline => _view.labelOutline;
-  bool get flatFieldEnabled => _view.flatFieldEnabled;
-  bool get mirror => _view.mirror;
+  Future<void> refreshDevices() => _connection.refreshDevices();
 
-  /// User measurement points in sensor coordinates.
-  final MeasurePoints _points = MeasurePoints();
-  List<MeasurePoint> get measurePoints => _points.points;
-  static const int maxMeasurePoints = MeasurePoints.max;
+  bool sendCommand(int value, String label, {bool quiet = false}) =>
+      _connection.sendCommand(value, label, quiet: quiet);
 
-  /// Incremented whenever a new [image] is ready; capture and streaming
-  /// listen to this instead of to every state change.
-  final ValueNotifier<int> frameTick = ValueNotifier<int>(0);
+  void triggerShutter() => _connection.triggerShutter();
 
-  /// Statistics, colour scale and markers of the latest frame.
-  final FrameProcessor _processor = FrameProcessor();
+  void setRange(MeasurementRange range) => _connection.setRange(range);
 
-  /// Colour scale of the latest frame, in °C.
-  double get scaleLow => _processor.scaleLow;
-  double get scaleHigh => _processor.scaleHigh;
+  /// Writes emissivity 0.95, 20 °C ambient/reflected, 1 m distance and
+  /// commits them. Needed once on units that still report emissivity 0.02.
+  Future<void> writeDefaultParameters() =>
+      _connection.writeDefaultParameters();
 
-  /// Lens shading and one-point calibration, per camera.
-  late final CalibrationStore _calibration = CalibrationStore(
-    state: _state,
-    connection: _connection,
-    shutter: _shutter,
-    processor: _processor,
-  );
+  // ---------------------------------------------------------------------
+  // Shutter
+  // ---------------------------------------------------------------------
 
-  /// Lens shading correction measured on a uniform surface (per camera).
-  FlatField? get flatField => _calibration.flatField;
-
-  /// Hottest/coldest marker positions in sensor pixels, smoothed so they
-  /// glide instead of jumping across evenly warm areas.
-  (double, double)? get hotMarker => _processor.hotMarker;
-  (double, double)? get coldMarker => _processor.coldMarker;
-
-  static const double markerHysteresis = FrameProcessor.markerHysteresis;
-  static const double markerSmoothing = FrameProcessor.markerSmoothing;
-
-  /// Shutter correction, its automatic repetition and revision detection.
-  late final ShutterControl _shutter = ShutterControl(
-    state: _state,
-    connection: _connection,
-    dropImage: () => image = null,
-  );
   ShutterCorrection? get correction => _shutter.correction;
-  Uint16List? get processedCounts => _processor.processedCounts;
-  TemperatureTable? get table => _processor.table;
-  FrameStats? get stats => _processor.stats;
-  ui.Image? image;
-  (int, int)? point;
-
-  int _ticksAtLastStats = 0;
-  bool _rendering = false;
 
   /// True while a V2 camera streams but has no shutter reference yet: the
   /// image would still show the raw stripes, so it is not shown.
@@ -165,11 +178,97 @@ class ProbeController extends ChangeNotifier {
   static const double reNucFpaDelta = ShutterControl.reNucFpaDelta;
   static const Duration minReNucInterval = ShutterControl.minReNucInterval;
 
+  /// Closes the shutter, waits until the picture stops changing and
+  /// averages several frames into a per-pixel reference (V2 only).
+  Future<void> runShutterCorrection() => _shutter.runShutterCorrection();
+
+  void setAnchorToModel(bool value) => _shutter.setAnchorToModel(value);
+
+  Future<void> setAutoShutter(bool value) => _shutter.setAutoShutter(value);
+
+  void clearShutterCorrection() => _shutter.clearShutterCorrection();
+
   // ---------------------------------------------------------------------
-  // Devices
+  // Model settings and calibration
   // ---------------------------------------------------------------------
 
-  Future<void> refreshDevices() => _connection.refreshDevices();
+  void setRevision(HardwareRevision revision) {
+    settings = settings.copyWith(revision: revision);
+    log('Model revision set to ${revision.name}');
+    _calibration.load();
+  }
+
+  void setShutterSource(ShutterSource source) {
+    settings = settings.copyWith(shutterSource: source);
+    log('Shutter temperature source: ${source.name}');
+    _calibration.load();
+  }
+
+  /// Lens shading correction measured on a uniform surface (per camera).
+  FlatField? get flatField => _calibration.flatField;
+
+  Future<void> resetFlatField() => _calibration.resetFlatField();
+
+  /// Measures the lens shading on a uniform surface. Returns a message for
+  /// the user.
+  Future<String> calibrateFlatField() => _calibration.calibrateFlatField();
+
+  /// One-point calibration: makes the measured spot (tap point, else the
+  /// centre) read [knownCelsius].
+  Future<void> calibrateTo(double knownCelsius) =>
+      _calibration.calibrateTo(knownCelsius, point);
+
+  Future<void> resetCalibration() => _calibration.resetCalibration();
+
+  // ---------------------------------------------------------------------
+  // Latest frame
+  // ---------------------------------------------------------------------
+
+  Uint16List? get processedCounts => _processor.processedCounts;
+  TemperatureTable? get table => _processor.table;
+  FrameStats? get stats => _processor.stats;
+
+  /// Colour scale of the latest frame, in °C.
+  double get scaleLow => _processor.scaleLow;
+  double get scaleHigh => _processor.scaleHigh;
+
+  /// Hottest/coldest marker positions in sensor pixels, smoothed so they
+  /// glide instead of jumping across evenly warm areas.
+  (double, double)? get hotMarker => _processor.hotMarker;
+  (double, double)? get coldMarker => _processor.coldMarker;
+
+  static const double markerHysteresis = FrameProcessor.markerHysteresis;
+  static const double markerSmoothing = FrameProcessor.markerSmoothing;
+
+  /// Temperature of the 3x3 neighbourhood around a sensor pixel.
+  double? temperatureAt(int x, int y) => _processor.temperatureAt(frame, x, y);
+
+  /// Per-pixel temperatures of the latest frame in 1/50 °C (sensor
+  /// orientation), -32768 where the model has no value. Used by the web
+  /// viewer, which colours the image itself.
+  Int16List? temperatureGrid() => _processor.temperatureGrid();
+
+  void setPoint((int, int)? p) {
+    point = p;
+    notifyListeners();
+  }
+
+  // ---------------------------------------------------------------------
+  // Display settings
+  // ---------------------------------------------------------------------
+
+  DisplaySource get displaySource => _view.displaySource;
+  Palette get palette => _view.palette;
+  int get quarterTurns => _view.quarterTurns;
+  double get minSpan => _view.minSpan;
+  bool get fixedScale => _view.fixedScale;
+  double get fixedMin => _view.fixedMin;
+  double get fixedMax => _view.fixedMax;
+  SceneLayout get layout => _view.layout;
+  int get viewTurns => _view.viewTurns;
+  int get labelOutline => _view.labelOutline;
+  bool get flatFieldEnabled => _view.flatFieldEnabled;
+  bool get mirror => _view.mirror;
 
   Future<void> loadPreferences() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
@@ -195,9 +294,19 @@ class ProbeController extends ChangeNotifier {
 
   Future<void> setMinSpan(double value) => _view.setMinSpan(value);
 
+  void setDisplaySource(DisplaySource source) =>
+      _view.setDisplaySource(source);
+
+  Future<void> setPalette(Palette p) => _view.setPalette(p);
+
+  Future<void> rotate() => _view.rotate();
+
   // ---------------------------------------------------------------------
   // Measurement points
   // ---------------------------------------------------------------------
+
+  List<MeasurePoint> get measurePoints => _points.points;
+  static const int maxMeasurePoints = MeasurePoints.max;
 
   MeasurePoint? addMeasurePoint(int x, int y) {
     final MeasurePoint? p = _points.add(x, y);
@@ -215,13 +324,9 @@ class ProbeController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Temperature of the 3x3 neighbourhood around a sensor pixel.
-  double? temperatureAt(int x, int y) => _processor.temperatureAt(frame, x, y);
-
-  /// Per-pixel temperatures of the latest frame in 1/50 °C (sensor
-  /// orientation), -32768 where the model has no value. Used by the web
-  /// viewer, which colours the image itself.
-  Int16List? temperatureGrid() => _processor.temperatureGrid();
+  // ---------------------------------------------------------------------
+  // Connecting
+  // ---------------------------------------------------------------------
 
   /// Lists devices and connects right away when exactly one known T2S+
   /// (or exactly one camera at all) is attached.
@@ -290,76 +395,10 @@ class ProbeController extends ChangeNotifier {
   }
 
   // ---------------------------------------------------------------------
-  // Commands
-  // ---------------------------------------------------------------------
-
-  bool sendCommand(int value, String label, {bool quiet = false}) =>
-      _connection.sendCommand(value, label, quiet: quiet);
-
-  void triggerShutter() => _connection.triggerShutter();
-
-  void setRange(MeasurementRange range) => _connection.setRange(range);
-
-  /// Writes emissivity 0.95, 20 °C ambient/reflected, 1 m distance and
-  /// commits them. Needed once on units that still report emissivity 0.02.
-  Future<void> writeDefaultParameters() =>
-      _connection.writeDefaultParameters();
-
-  /// Closes the shutter, waits until the picture stops changing and
-  /// averages several frames into a per-pixel reference (V2 only).
-  Future<void> runShutterCorrection() => _shutter.runShutterCorrection();
-
-  void setAnchorToModel(bool value) => _shutter.setAnchorToModel(value);
-
-  Future<void> setAutoShutter(bool value) => _shutter.setAutoShutter(value);
-
-  void clearShutterCorrection() => _shutter.clearShutterCorrection();
-
-  // ---------------------------------------------------------------------
-  // Model settings and calibration
-  // ---------------------------------------------------------------------
-
-  void setRevision(HardwareRevision revision) {
-    settings = settings.copyWith(revision: revision);
-    log('Model revision set to ${revision.name}');
-    _calibration.load();
-  }
-
-  void setShutterSource(ShutterSource source) {
-    settings = settings.copyWith(shutterSource: source);
-    log('Shutter temperature source: ${source.name}');
-    _calibration.load();
-  }
-
-  void setDisplaySource(DisplaySource source) =>
-      _view.setDisplaySource(source);
-
-  Future<void> setPalette(Palette p) => _view.setPalette(p);
-
-  Future<void> rotate() => _view.rotate();
-
-  void setPoint((int, int)? p) {
-    point = p;
-    notifyListeners();
-  }
-
-  Future<void> resetFlatField() => _calibration.resetFlatField();
-
-  /// Measures the lens shading on a uniform surface. Returns a message for
-  /// the user.
-  Future<String> calibrateFlatField() => _calibration.calibrateFlatField();
-
-  /// One-point calibration: makes the measured spot (tap point, else the
-  /// centre) read [knownCelsius].
-  Future<void> calibrateTo(double knownCelsius) =>
-      _calibration.calibrateTo(knownCelsius, point);
-
-  Future<void> resetCalibration() => _calibration.resetCalibration();
-
-  // ---------------------------------------------------------------------
   // Frame loop
   // ---------------------------------------------------------------------
 
+  /// Called by the connection for every decoded frame.
   void _process(T2sFrame f) {
     if (!_shutter.handleFrame(f)) return;
     final ({Uint16List shown, bool byTemperature}) result = _processor.process(
@@ -469,10 +508,6 @@ class ProbeController extends ChangeNotifier {
       },
     );
   }
-
-  // ---------------------------------------------------------------------
-  // Export
-  // ---------------------------------------------------------------------
 
   /// Writes the current raw frame plus a JSON report and opens the share
   /// sheet, so the data can be analysed elsewhere.
