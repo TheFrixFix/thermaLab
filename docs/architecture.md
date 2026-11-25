@@ -35,6 +35,8 @@ and stream settings in `CaptureService` and `CsvLogger`.
 | `flat_field.dart` | Lens shading correction |
 | `lib/probe/` | |
 | `probe_controller.dart` | **Central state**, the largest file: connection, frame loop, stats, measurement points, display settings, preferences |
+| `probe_state.dart` | `ProbeState`: model settings, busy flag, status line and log, shared by the parts below so they need not know `ProbeController` |
+| `camera_connection.dart` | `CameraConnection`: USB device list, opening a camera and choosing its stream, frame polling and decoding, camera commands |
 | `frame_processor.dart` | `FrameProcessor`: corrected counts, statistics, colour scale, hottest/coldest markers. No Flutter or USB, unit tested |
 | `measure_point.dart` | `MeasurePoint` and `MeasurePoints`: the user's measurement points |
 | `view_settings.dart` | `ViewSettings`: display settings (palette, scale, rotation, layout…) and their preferences, applied by name from the settings page and the web remote |
