@@ -45,6 +45,10 @@ class ViewSettings {
   /// Outline around marker labels: 0 shadow only, 1 normal, 2 thick.
   int labelOutline = 1;
 
+  /// Look of the colour bar and, for the simple one, where its unit sits.
+  ScaleStyle scaleStyle = ScaleStyle.detailed;
+  ScaleUnit scaleUnit = ScaleUnit.side;
+
   /// Apply the lens shading correction, if one was measured.
   bool flatFieldEnabled = true;
 
@@ -73,6 +77,16 @@ class ViewSettings {
               ? SceneLayout.fromTimestampCorner(oldCorner)
               : const SceneLayout());
     labelOutline = prefs.getInt('labelOutline') ?? 1;
+    scaleStyle = enumByName(
+      ScaleStyle.values,
+      prefs.getString('scaleStyle'),
+      ScaleStyle.detailed,
+    );
+    scaleUnit = enumByName(
+      ScaleUnit.values,
+      prefs.getString('scaleUnit'),
+      ScaleUnit.side,
+    );
     mirror = prefs.getBool('mirror') ?? false;
     viewTurns = prefs.getInt('viewTurns') ?? 0;
     flatFieldEnabled = prefs.getBool('flatFieldEnabled') ?? true;
@@ -96,6 +110,8 @@ class ViewSettings {
     'fixedMax': fixedMax,
     'layout': layout.toJson(),
     'labelOutline': labelOutline,
+    'scaleStyle': scaleStyle.name,
+    'scaleUnit': scaleUnit.name,
     'autoShutter': autoShutter,
     'mirror': mirror,
     'flatField': flatFieldEnabled,
@@ -150,6 +166,12 @@ class ViewSettings {
         if (v == null) return;
         labelOutline = v.clamp(0, 2);
         await prefs.setInt('labelOutline', labelOutline);
+      case 'scaleStyle':
+        scaleStyle = enumByName(ScaleStyle.values, value, scaleStyle);
+        await prefs.setString('scaleStyle', scaleStyle.name);
+      case 'scaleUnit':
+        scaleUnit = enumByName(ScaleUnit.values, value, scaleUnit);
+        await prefs.setString('scaleUnit', scaleUnit.name);
       case 'autoShutter':
         if (value is bool) await setAutoShutter(value);
         return;

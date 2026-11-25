@@ -77,6 +77,8 @@ class SceneData {
     this.layout = const SceneLayout(),
     this.editing = false,
     this.labelOutline = 1,
+    this.scaleStyle = ScaleStyle.detailed,
+    this.scaleUnit = ScaleUnit.side,
     this.mirror = false,
     this.overlay,
   });
@@ -103,6 +105,10 @@ class SceneData {
   /// Outline around marker labels: 0 shadow only, 1 normal, 2 thick.
   final int labelOutline;
 
+  /// Look of the colour bar and where the simple one shows its unit.
+  final ScaleStyle scaleStyle;
+  final ScaleUnit scaleUnit;
+
   /// Thermal image flipped horizontally after rotation.
   final bool mirror;
 
@@ -123,6 +129,8 @@ class SceneData {
     layout: layout,
     editing: editing,
     labelOutline: labelOutline,
+    scaleStyle: scaleStyle,
+    scaleUnit: scaleUnit,
     mirror: mirror,
     overlay: overlay ?? this.overlay,
   );
@@ -445,30 +453,38 @@ _ScaleGeometry _scaleGeometry(Size size, SceneData data) {
 }
 
 /// Box of the colour scale for the given output size.
-Rect scaleRect(Size size, SceneData data) => _scaleGeometry(size, data).plate;
+Rect scaleRect(Size size, SceneData data) =>
+    data.scaleStyle == ScaleStyle.simple
+    ? _simpleScaleGeometry(size, data).box
+    : _scaleGeometry(size, data).plate;
+
+/// Palette gradient from hot (top) to cold (bottom) filling [bar].
+Paint _barPaint(Rect bar, Palette palette) {
+  final List<Color> colors = <Color>[
+    for (int i = 255; i >= 0; i -= 17) Color(_rgbaToArgb(palette.rgba[i])),
+    Color(_rgbaToArgb(palette.rgba[0])),
+  ];
+  return Paint()
+    ..shader = ui.Gradient.linear(
+      bar.topCenter,
+      bar.bottomCenter,
+      colors,
+      <double>[for (int i = 0; i < colors.length; i++) i / (colors.length - 1)],
+    );
+}
 
 void _paintScale(Canvas canvas, Size size, SceneData data, double unit) {
+  if (data.scaleStyle == ScaleStyle.simple) {
+    _paintSimpleScale(canvas, size, data, unit);
+    return;
+  }
   final _ScaleGeometry g = _scaleGeometry(size, data);
   final Rect bar = g.bar;
   canvas.drawRRect(
     RRect.fromRectAndRadius(g.plate, Radius.circular(5 * unit)),
     Paint()..color = const Color(0x66000000),
   );
-
-  final List<Color> colors = <Color>[
-    for (int i = 255; i >= 0; i -= 17) Color(_rgbaToArgb(data.palette.rgba[i])),
-    Color(_rgbaToArgb(data.palette.rgba[0])),
-  ];
-  canvas.drawRect(
-    bar,
-    Paint()
-      ..shader = ui.Gradient.linear(
-        bar.topCenter,
-        bar.bottomCenter,
-        colors,
-        <double>[for (int i = 0; i < colors.length; i++) i / (colors.length - 1)],
-      ),
-  );
+  canvas.drawRect(bar, _barPaint(bar, data.palette));
   canvas.drawRect(
     bar,
     Paint()
@@ -499,6 +515,148 @@ void _paintScale(Canvas canvas, Size size, SceneData data, double unit) {
       bar.top - 2 * unit - g.unitLabel.height,
     ),
   );
+}
+
+/// A text in a dark rounded pill, as used by the simple colour bar.
+class _Pill {
+  _Pill(this.text, this.rect);
+  final TextPainter text;
+  final Rect rect;
+
+  void paint(Canvas canvas) {
+    canvas.drawRRect(
+      RRect.fromRectAndRadius(rect, Radius.circular(rect.height / 2)),
+      Paint()..color = const Color(0xB3000000),
+    );
+    text.paint(canvas, rect.center - Offset(text.width / 2, text.height / 2));
+  }
+}
+
+class _SimpleScaleGeometry {
+  _SimpleScaleGeometry(this.box, this.bar, this.high, this.low, this.unit);
+  final Rect box;
+  final Rect bar;
+  final _Pill high;
+  final _Pill low;
+
+  /// Unit pill, null when the unit is inside the limits or hidden.
+  final _Pill? unit;
+}
+
+/// Simple colour bar: the bar between its upper and lower limit, each in a
+/// pill, and the unit where [SceneData.scaleUnit] puts it. All parts are
+/// centred on the bar except a unit beside it, which sits on the side
+/// facing the image centre.
+_SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
+  final double u = _unit(size);
+  final ScaleUnit where = data.scaleUnit;
+  final bool inPills = where == ScaleUnit.inPills;
+  final String suffix = inPills ? '°C' : '';
+  // Limits without the unit have room to be larger.
+  final double limitSize = (inPills ? 13 : 15.5) * u;
+  TextPainter limit(double v) => _text(
+    '${v.toStringAsFixed(1)}$suffix',
+    limitSize,
+    Colors.white,
+    weight: FontWeight.w600,
+  );
+  final TextPainter highText = limit(data.scaleHigh);
+  final TextPainter lowText = limit(data.scaleLow);
+  final TextPainter? unitText = inPills || where == ScaleUnit.hidden
+      ? null
+      : _text('°C', 11 * u, Colors.white, weight: FontWeight.w500);
+
+  final double padX = 6 * u;
+  final double padY = 2.5 * u;
+  final double gap = 3 * u;
+  final double pillW = math.max(highText.width, lowText.width) + 2 * padX;
+  final double pillH = highText.height + 2 * padY;
+  final Size unitPill = unitText == null
+      ? Size.zero
+      : Size(unitText.width + 2 * padX * 0.8, unitText.height + 2 * padY * 0.8);
+  final double barW = 9 * u;
+  final double barH = math.min(size.height * 0.36, 140 * u);
+
+  // Extents left and right of the bar centre, and the stack from top down.
+  final bool unitLeft = data.layout.scalePos.dx >= 0.5;
+  double left = math.max(pillW, barW) / 2;
+  double right = left;
+  if (where == ScaleUnit.side && unitText != null) {
+    final double reach = barW / 2 + gap + unitPill.width;
+    if (unitLeft) {
+      left = math.max(left, reach);
+    } else {
+      right = math.max(right, reach);
+    }
+  }
+  final double above = where == ScaleUnit.above ? unitPill.height + gap : 0;
+  final double below = where == ScaleUnit.below ? unitPill.height + gap : 0;
+  final double h = above + pillH + gap + barH + gap + pillH + below;
+
+  final Rect box = _place(size, data.layout.scalePos, left + right, h, 6 * u);
+  final double cx = box.left + left;
+  final Rect highRect = Rect.fromCenter(
+    center: Offset(cx, box.top + above + pillH / 2),
+    width: pillW,
+    height: pillH,
+  );
+  final Rect bar = Rect.fromLTWH(
+    cx - barW / 2,
+    highRect.bottom + gap,
+    barW,
+    barH,
+  );
+  final Rect lowRect = Rect.fromCenter(
+    center: Offset(cx, bar.bottom + gap + pillH / 2),
+    width: pillW,
+    height: pillH,
+  );
+  _Pill? unitPillAt(Offset center) => unitText == null
+      ? null
+      : _Pill(
+          unitText,
+          Rect.fromCenter(
+            center: center,
+            width: unitPill.width,
+            height: unitPill.height,
+          ),
+        );
+  final _Pill? unitP = switch (where) {
+    ScaleUnit.side => unitPillAt(
+      Offset(
+        unitLeft
+            ? bar.left - gap - unitPill.width / 2
+            : bar.right + gap + unitPill.width / 2,
+        bar.center.dy,
+      ),
+    ),
+    ScaleUnit.above => unitPillAt(Offset(cx, box.top + unitPill.height / 2)),
+    ScaleUnit.below => unitPillAt(Offset(cx, box.bottom - unitPill.height / 2)),
+    ScaleUnit.inPills || ScaleUnit.hidden => null,
+  };
+  return _SimpleScaleGeometry(
+    box,
+    bar,
+    _Pill(highText, highRect),
+    _Pill(lowText, lowRect),
+    unitP,
+  );
+}
+
+void _paintSimpleScale(Canvas canvas, Size size, SceneData data, double unit) {
+  final _SimpleScaleGeometry g = _simpleScaleGeometry(size, data);
+  final RRect bar = RRect.fromRectAndRadius(g.bar, Radius.circular(2 * unit));
+  canvas.drawRRect(bar, _barPaint(g.bar, data.palette));
+  canvas.drawRRect(
+    bar,
+    Paint()
+      ..style = PaintingStyle.stroke
+      ..strokeWidth = 1 * unit
+      ..color = const Color(0x80000000),
+  );
+  g.high.paint(canvas);
+  g.low.paint(canvas);
+  g.unit?.paint(canvas);
 }
 
 int _rgbaToArgb(int v) =>

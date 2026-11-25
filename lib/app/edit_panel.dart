@@ -145,6 +145,40 @@ class EditPanel extends StatelessWidget {
                 ),
             ],
           ),
+          _Section(
+            title: 'Colour bar',
+            children: <Widget>[
+              for (final (ScaleStyle v, String name)
+                  in const <(ScaleStyle, String)>[
+                    (ScaleStyle.detailed, 'Detailed'),
+                    (ScaleStyle.simple, 'Simple'),
+                  ])
+                _Toggle(
+                  label: name,
+                  on: c.scaleStyle == v,
+                  onTap: () => c.applySetting('scaleStyle', v.name),
+                ),
+            ],
+          ),
+          if (c.scaleStyle == ScaleStyle.simple)
+            _Section(
+              title: 'Colour bar unit',
+              children: <Widget>[
+                for (final (ScaleUnit v, String name)
+                    in const <(ScaleUnit, String)>[
+                      (ScaleUnit.side, 'Beside'),
+                      (ScaleUnit.above, 'Above'),
+                      (ScaleUnit.below, 'Below'),
+                      (ScaleUnit.inPills, 'With limits'),
+                      (ScaleUnit.hidden, 'None'),
+                    ])
+                  _Toggle(
+                    label: name,
+                    on: c.scaleUnit == v,
+                    onTap: () => c.applySetting('scaleUnit', v.name),
+                  ),
+              ],
+            ),
         ],
       ),
     );

@@ -77,6 +77,8 @@ SceneData? buildScene(
     layout: layout,
     editing: editing,
     labelOutline: c.labelOutline,
+    scaleStyle: c.scaleStyle,
+    scaleUnit: c.scaleUnit,
     mirror: c.mirror,
     overlay: _overlayLayer(camera),
   );

@@ -80,6 +80,19 @@ class SceneLayout {
   );
 }
 
+/// Look of the colour bar: five labelled ticks on a plate, or only the bar
+/// with its lower and upper limit.
+enum ScaleStyle { detailed, simple }
+
+/// Where the simple colour bar shows the unit: beside the bar halfway up,
+/// above the upper limit, below the lower limit, after both limits, or not
+/// at all. Leaving it out of the limits lets them be drawn larger.
+enum ScaleUnit { side, above, below, inPills, hidden }
+
+/// The enum value called [name], or [fallback] for unknown names.
+T enumByName<T extends Enum>(List<T> values, Object? name, T fallback) =>
+    values.where((T v) => v.name == name).firstOrNull ?? fallback;
+
 /// Snaps a dragged fraction to edges and centre when close.
 double snapFraction(double v, {double threshold = 0.04}) {
   for (final double target in const <double>[0, 0.5, 1]) {

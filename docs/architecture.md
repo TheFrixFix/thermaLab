@@ -80,7 +80,7 @@ tested: they need neither Flutter nor USB. The rest needs the camera, since
 | `probe_page.dart` | Diagnostics screen |
 | `lib/render/` | |
 | `scene_painter.dart` | `SceneData`, `SceneMarker`, `ScenePainter`: draws a frame with all overlays |
-| `scene_layout.dart` | Which elements show and where the movable ones sit |
+| `scene_layout.dart` | Which elements show and where the movable ones sit; `ScaleStyle` and `ScaleUnit` for the look of the colour bar (detailed, or simple with its unit placed by choice) |
 | `geometry.dart` | Rotation and mirroring of sensor coordinates |
 | `palette.dart` | Colour maps |
 | `lib/app/` | |
@@ -116,5 +116,8 @@ tested: they need neither Flutter nor USB. The rest needs the camera, since
   the connect steps is in `probe_controller.dart`.
 - New marker or overlay element: `SceneData` and `ScenePainter`, layout in
   `scene_layout.dart`.
+- Look of markers, colour bar or clock: the browser viewer draws them itself
+  from the frame header, so change `scene_painter.dart` and its copy in
+  `assets/web/index.html` together.
 - New remote command: `capture_service.dart` (handler) and
   `assets/web/index.html`; the wire format is in `live_server.dart`.

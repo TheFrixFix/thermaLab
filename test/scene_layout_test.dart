@@ -28,6 +28,19 @@ void main() {
     expect(l.clockPos, const Offset(1, 0));
   });
 
+  test('scale style and unit are read by name with a fallback', () {
+    expect(
+      enumByName(ScaleStyle.values, 'simple', ScaleStyle.detailed),
+      ScaleStyle.simple,
+    );
+    expect(
+      enumByName(ScaleUnit.values, 'inPills', ScaleUnit.side),
+      ScaleUnit.inPills,
+    );
+    expect(enumByName(ScaleUnit.values, 'bogus', ScaleUnit.side), ScaleUnit.side);
+    expect(enumByName(ScaleUnit.values, null, ScaleUnit.above), ScaleUnit.above);
+  });
+
   test('the former timestamp corners map to positions', () {
     expect(SceneLayout.fromTimestampCorner(0).clockPos, Offset.zero);
     expect(SceneLayout.fromTimestampCorner(1).clockPos, const Offset(1, 0));

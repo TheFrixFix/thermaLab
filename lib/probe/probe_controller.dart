@@ -267,6 +267,8 @@ class ProbeController extends ChangeNotifier {
   SceneLayout get layout => _view.layout;
   int get viewTurns => _view.viewTurns;
   int get labelOutline => _view.labelOutline;
+  ScaleStyle get scaleStyle => _view.scaleStyle;
+  ScaleUnit get scaleUnit => _view.scaleUnit;
   bool get flatFieldEnabled => _view.flatFieldEnabled;
   bool get mirror => _view.mirror;
 

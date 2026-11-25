@@ -176,6 +176,11 @@
         <label><input type="checkbox" id="lCold"> Min</label></div>
       <div class="row"><label for="sOutline">Outline around marker labels</label>
         <select id="sOutline"><option value="0">Shadow</option><option value="1">Normal</option><option value="2">Thick</option></select></div>
+      <div class="row"><label for="sScaleStyle">Colour bar</label>
+        <select id="sScaleStyle"><option value="detailed">Detailed</option><option value="simple">Simple</option></select></div>
+      <div class="row"><label for="sScaleUnit">Colour bar unit (simple bar)</label>
+        <select id="sScaleUnit"><option value="side">Beside the bar</option><option value="above">Above</option>
+        <option value="below">Below</option><option value="inPills">With the limits</option><option value="hidden">None</option></select></div>
       <div class="row"><label><input type="checkbox" id="sAuto"> Automatic shutter</label></div>
       <div class="row"><label><input type="checkbox" id="sFlat"> Lens shading correction</label></div>
       <h2 style="margin-top:18px">Temperature log</h2>
@@ -384,7 +389,10 @@ function paintScene(cw, ch, fit, interactive) {
     drawMarker(m, x, y, unit, interactive && drag && drag.id === id && id !== null, s.labelOutline);
   }
   const layout = s.layout || {};
-  if (layout.showScale !== false) drawScale(h, unit, layout);
+  if (layout.showScale !== false) {
+    if (s.scaleStyle === 'simple') drawSimpleScale(h, unit, layout, s.scaleUnit || 'side');
+    else drawScale(h, unit, layout);
+  }
   if (layout.showClock !== false) drawTimestamp(h.time, layout, unit);
   if (interactive && drag) drawTrash(unit);
   ctx.restore();
@@ -572,6 +580,61 @@ function drawScale(h, unit, layout) {
   ctx.font = `500 ${unitSize}px system-ui, sans-serif`;
   ctx.fillText('°C', bx + barW / 2, by - 2 * unit);
 }
+// Simple colour bar: the bar between its limits in pills, unit placed by
+// `where` (side, above, below, inPills, hidden). Mirrors scene_painter.dart.
+function drawSimpleScale(h, unit, layout, where) {
+  const r = imageRect, inPills = where === 'inPills';
+  const font = (weight, size) => `${weight} ${size}px system-ui, sans-serif`;
+  const limitSize = (inPills ? 13 : 15.5) * unit, unitSize = 11 * unit;
+  const suffix = inPills ? '°C' : '';
+  const hi = h.hi.toFixed(1) + suffix, lo = h.lo.toFixed(1) + suffix;
+  ctx.font = font(600, limitSize);
+  const padX = 6 * unit, padY = 2.5 * unit, gap = 3 * unit;
+  const pillW = Math.max(ctx.measureText(hi).width, ctx.measureText(lo).width) + 2 * padX;
+  const pillH = limitSize * 1.2 + 2 * padY;
+  const hasUnit = !inPills && where !== 'hidden';
+  ctx.font = font(500, unitSize);
+  const uw = hasUnit ? ctx.measureText('°C').width + 1.6 * padX : 0;
+  const uh = hasUnit ? unitSize * 1.2 + 1.6 * padY : 0;
+  const barW = 9 * unit, barH = Math.min(r.h * 0.36, 140 * unit);
+  const sx = layout.scaleX ?? 1, sy = layout.scaleY ?? 0.5, unitLeft = sx >= 0.5;
+  let left = Math.max(pillW, barW) / 2, right = left;
+  if (hasUnit && where === 'side') {
+    const reach = barW / 2 + gap + uw;
+    if (unitLeft) left = Math.max(left, reach); else right = Math.max(right, reach);
+  }
+  const above = hasUnit && where === 'above' ? uh + gap : 0;
+  const below = hasUnit && where === 'below' ? uh + gap : 0;
+  const total = above + pillH + gap + barH + gap + pillH + below;
+  const pos = place(sx, sy, left + right, total, 6 * unit);
+  const cx = pos.x + left, by = pos.y + above + pillH + gap;
+  const pill = (text, x, y, w, hh, weight, size) => {
+    ctx.fillStyle = 'rgba(0,0,0,.7)';
+    roundRect(x - w / 2, y - hh / 2, w, hh, hh / 2); ctx.fill();
+    ctx.font = font(weight, size); ctx.fillStyle = '#fff';
+    ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillText(text, x, y);
+  };
+  const g = ctx.createLinearGradient(0, by, 0, by + barH);
+  for (let i = 0; i <= 15; i++) {
+    const k = 255 - i * 17;
+    g.addColorStop(i / 15, `rgb(${lut[k * 3]},${lut[k * 3 + 1]},${lut[k * 3 + 2]})`);
+  }
+  ctx.fillStyle = g;
+  roundRect(cx - barW / 2, by, barW, barH, 2 * unit); ctx.fill();
+  ctx.lineWidth = unit; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.stroke();
+  pill(hi, cx, pos.y + above + pillH / 2, pillW, pillH, 600, limitSize);
+  pill(lo, cx, by + barH + gap + pillH / 2, pillW, pillH, 600, limitSize);
+  if (!hasUnit) return;
+  if (where === 'side') {
+    const ux = unitLeft ? cx - barW / 2 - gap - uw / 2 : cx + barW / 2 + gap + uw / 2;
+    pill('°C', ux, by + barH / 2, uw, uh, 500, unitSize);
+  } else if (where === 'above') {
+    pill('°C', cx, pos.y + uh / 2, uw, uh, 500, unitSize);
+  } else {
+    pill('°C', cx, pos.y + total - uh / 2, uw, uh, 500, unitSize);
+  }
+}
 function drawTimestamp(text, layout, unit) {
   const size = 11 * unit;
   ctx.font = `500 ${size}px system-ui, sans-serif`;
@@ -643,6 +706,9 @@ function syncControls(h) {
   const lay = s.layout || {};
   for (const [id, key] of LAYOUT_TOGGLES) setIfIdle($(id), 'checked', lay[key] !== false);
   setIfIdle($('sOutline'), 'value', String(s.labelOutline));
+  setIfIdle($('sScaleStyle'), 'value', s.scaleStyle || 'detailed');
+  setIfIdle($('sScaleUnit'), 'value', s.scaleUnit || 'side');
+  $('sScaleUnit').disabled = s.scaleStyle !== 'simple';
   setIfIdle($('sAuto'), 'checked', s.autoShutter);
   setIfIdle($('sMirror'), 'checked', !!s.mirror);
   const csv = h.csv || {};
@@ -695,6 +761,8 @@ const LAYOUT_TOGGLES = [['lClock', 'showClock'], ['lScale', 'showScale'], ['lCen
   ['lHot', 'showHottest'], ['lCold', 'showColdest']];
 for (const [id, key] of LAYOUT_TOGGLES) $(id).onchange = (e) => set('layout', { [key]: e.target.checked });
 $('sOutline').onchange = (e) => set('labelOutline', parseInt(e.target.value, 10));
+$('sScaleStyle').onchange = (e) => set('scaleStyle', e.target.value);
+$('sScaleUnit').onchange = (e) => set('scaleUnit', e.target.value);
 $('sAuto').onchange = (e) => set('autoShutter', e.target.checked);
 $('sMirror').onchange = (e) => set('mirror', e.target.checked);
 $('sFlat').onchange = (e) => set('flatField', e.target.checked);

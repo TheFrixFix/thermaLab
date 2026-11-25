@@ -37,7 +37,7 @@ control to any browser in your Wi-Fi.
 - **Edit mode with live preview**: show or hide clock, colour bar and each
   marker, drag clock and colour bar where you want them, rotate and mirror the
   image, choose the palette, turn the whole display for landscape use, set the
-  label outline
+  label outline, choose a detailed or simple colour bar
 - Fixed or automatic colour scale with a minimum span
 
 ## Supported hardware
@@ -113,6 +113,10 @@ change shows live:
   together) for holding the phone in landscape. Photos, videos and the browser
   get the picture in this reading direction.
 - **Label outline**: shadow, normal or thick outline around marker labels
+- **Colour bar**: *Detailed* shows five labelled temperatures on a dark plate.
+  *Simple* shows only the bar with its upper and lower limit in large labels.
+  For the simple bar, **Colour bar unit** puts °C beside the bar (on the side
+  facing the image), above, below, after both limits, or leaves it out.
 
 While the panel is open, drag the clock or the colour bar in the image to move
 it; both snap to the edges and the centre. **Done** saves the layout,
