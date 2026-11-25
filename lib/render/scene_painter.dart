@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 
+import '../t2s/temperature_unit.dart';
 import 'geometry.dart';
 import 'palette.dart';
 import 'scene_layout.dart';
@@ -79,6 +80,7 @@ class SceneData {
     this.labelOutline = 1,
     this.scaleStyle = ScaleStyle.detailed,
     this.scaleUnit = ScaleUnit.side,
+    this.temperatureUnit = TemperatureUnit.celsius,
     this.mirror = false,
     this.overlay,
   });
@@ -109,6 +111,10 @@ class SceneData {
   final ScaleStyle scaleStyle;
   final ScaleUnit scaleUnit;
 
+  /// Unit of all shown temperatures; [scaleLow], [scaleHigh] and the
+  /// marker temperatures are in °C and converted while drawing.
+  final TemperatureUnit temperatureUnit;
+
   /// Thermal image flipped horizontally after rotation.
   final bool mirror;
 
@@ -131,6 +137,7 @@ class SceneData {
     labelOutline: labelOutline,
     scaleStyle: scaleStyle,
     scaleUnit: scaleUnit,
+    temperatureUnit: temperatureUnit,
     mirror: mirror,
     overlay: overlay ?? this.overlay,
   );
@@ -291,8 +298,10 @@ TextPainter _text(String s, double fontSize, Color color,
   )..layout();
 }
 
-String formatTemp(double? t) =>
-    t == null || t.isNaN ? '--' : '${t.toStringAsFixed(1)}°';
+/// Marker label for [t] in °C, shown in [unit].
+String formatTemp(double? t, TemperatureUnit unit) => t == null || t.isNaN
+    ? '--'
+    : '${unit.fromCelsius(t).toStringAsFixed(1)}${unit.markSuffix}';
 
 void _paintMarker(
   Canvas canvas,
@@ -373,7 +382,7 @@ void _paintMarker(
     shape(stroke);
   }
 
-  final String text = formatTemp(m.temperature);
+  final String text = formatTemp(m.temperature, data.temperatureUnit);
   final TextPainter tp = _text(text, 12.5 * unit, color);
 
   // Keep the label inside the image.
@@ -425,11 +434,13 @@ _ScaleGeometry _scaleGeometry(Size size, SceneData data) {
   final double barH = math.min(size.height * 0.42, 170 * unit);
   // Labels: top, 3 intermediate, bottom.
   const int ticks = 5;
+  final TemperatureUnit tu = data.temperatureUnit;
+  final double high = tu.fromCelsius(data.scaleHigh);
+  final double low = tu.fromCelsius(data.scaleLow);
   final List<TextPainter> labels = <TextPainter>[
     for (int i = 0; i < ticks; i++)
       _text(
-        (data.scaleHigh - (data.scaleHigh - data.scaleLow) * i / (ticks - 1))
-            .toStringAsFixed(1),
+        (high - (high - low) * i / (ticks - 1)).toStringAsFixed(1),
         10.5 * unit,
         Colors.white,
         weight: FontWeight.w500,
@@ -437,7 +448,7 @@ _ScaleGeometry _scaleGeometry(Size size, SceneData data) {
   ];
   final double labelW = labels.map((TextPainter t) => t.width).reduce(math.max);
   final TextPainter unitLabel =
-      _text('°C', 10 * unit, Colors.white70, weight: FontWeight.w500);
+      _text(tu.symbol, 10 * unit, Colors.white70, weight: FontWeight.w500);
   final double plateW = labelW + 10 * unit + barW + 4 * unit;
   final double top = 6 * unit + unitLabel.height + 2 * unit;
   final double plateH = top + barH + 8 * unit;
@@ -568,11 +579,12 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
   final double u = _unit(size);
   final ScaleUnit where = data.scaleUnit;
   final bool inPills = where == ScaleUnit.inPills;
-  final String suffix = inPills ? '°C' : '';
+  final TemperatureUnit tu = data.temperatureUnit;
+  final String suffix = inPills ? tu.symbol : '';
   // Limits without the unit have room to be larger.
   final double limitSize = (inPills ? 13 : 15.5) * u;
   TextPainter limit(double v) => _text(
-    '${v.toStringAsFixed(1)}$suffix',
+    '${tu.fromCelsius(v).toStringAsFixed(1)}$suffix',
     limitSize,
     Colors.white,
     weight: FontWeight.w600,
@@ -581,7 +593,7 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
   final TextPainter lowText = limit(data.scaleLow);
   final TextPainter? unitText = inPills || where == ScaleUnit.hidden
       ? null
-      : _text('°C', 14 * u, Colors.white, weight: FontWeight.w600);
+      : _text(tu.symbol, 14 * u, Colors.white, weight: FontWeight.w600);
 
   // Same padding for limits and unit.
   final double padX = 4.8 * u;

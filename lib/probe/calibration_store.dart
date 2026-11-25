@@ -7,6 +7,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../t2s/flat_field.dart';
 import '../t2s/t2s_frame.dart';
 import '../t2s/temperature_model.dart';
+import '../t2s/temperature_unit.dart';
 import 'camera_connection.dart';
 import 'frame_processor.dart';
 import 'probe_state.dart';
@@ -72,8 +73,8 @@ class CalibrationStore {
   }
 
   /// Measures the lens shading on a uniform surface. Returns a message for
-  /// the user.
-  Future<String> calibrateFlatField() async {
+  /// the user, with the size of the correction in [unit].
+  Future<String> calibrateFlatField(TemperatureUnit unit) async {
     if (!connection.streaming || connection.frame == null) {
       return 'No camera image';
     }
@@ -109,7 +110,7 @@ class CalibrationStore {
           'c': ff.coefficients,
         }),
       );
-      // Express the correction in °C around the current centre level.
+      // Express the correction as a temperature around the centre level.
       final TemperatureTable? t = processor.table;
       final Uint16List? processedCounts = processor.processedCounts;
       String size = '${ff.maxOffset.toStringAsFixed(0)} counts';
@@ -118,7 +119,7 @@ class CalibrationStore {
             spotCount(processedCounts, f.width, f.height, (f.width ~/ 2, f.height ~/ 2));
         final double dT =
             (t.lookup(centre + ff.maxOffset.round()) - t.lookup(centre)).abs();
-        if (dT.isFinite) size = '${dT.toStringAsFixed(1)} °C';
+        if (dT.isFinite) size = unit.formatSpan(dT);
       }
       state.log('Lens shading measured from ${frames.length} frames, '
           'largest correction $size');

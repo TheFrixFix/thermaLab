@@ -13,8 +13,10 @@ import '../render/scene_painter.dart' show formatTimestamp;
 /// time into a CSV file on the phone.
 ///
 /// File layout: comment lines start with `#`. Whenever the set or position
-/// of measurement points changes, a `# points:` line with their sensor
-/// pixel positions and a new column header follow.
+/// of measurement points or the temperature unit changes, a `# points:`
+/// line with their sensor pixel positions, a `# temperatures in` line and
+/// a new column header follow. Column names end in the unit letter
+/// (`hottest_C`, `hottest_F`, `hottest_K`).
 class CsvLogger extends ChangeNotifier {
   CsvLogger(this.controller) {
     unawaited(_loadPreferences());
@@ -39,7 +41,8 @@ class CsvLogger extends ChangeNotifier {
 
   /// Rows of the current (or last finished) log, for the live table in the
   /// web viewer: time, elapsed seconds, hottest, coldest, centre and the
-  /// measurement points by label.
+  /// measurement points by label. Temperatures stay in °C here; the viewer
+  /// converts them to its unit, as it does with the stream.
   List<Map<String, Object?>> _rowData = <Map<String, Object?>>[];
 
   /// Rows of the log offered to viewers (current, else last finished).
@@ -160,8 +163,7 @@ class CsvLogger extends ChangeNotifier {
       ..writeln('# interval_s ${interval.toStringAsFixed(1)}')
       ..writeln('# point positions are sensor pixels'
           '${f == null ? '' : ' (x 0..${f.width - 1}, y 0..${f.height - 1})'}'
-          ', unrotated camera orientation')
-      ..writeln('# temperatures in degrees Celsius, empty = no value');
+          ', unrotated camera orientation');
   }
 
   void _writeRow() {
@@ -169,9 +171,10 @@ class CsvLogger extends ChangeNotifier {
     final FrameStats? s = controller.stats;
     if (sink == null || s == null) return;
     final List<MeasurePoint> points = controller.measurePoints;
-    final String signature = points
+    final TemperatureUnit unit = controller.temperatureUnit;
+    final String signature = '${unit.name}|${points
         .map((MeasurePoint p) => '${p.id}:${p.x},${p.y}')
-        .join(';');
+        .join(';')}';
     if (signature != _pointSignature) {
       _pointSignature = signature;
       sink.writeln(
@@ -180,16 +183,19 @@ class CsvLogger extends ChangeNotifier {
                   'P${i + 1}=(${points[i].x},${points[i].y})',
               ].join(' ')}',
       );
+      sink.writeln('# temperatures in ${unit.longName}, empty = no value');
+      final String u = unit.letter;
       sink.writeln(<String>[
         'time',
         'elapsed_s',
-        'hottest_C',
-        'coldest_C',
-        'centre_C',
-        for (int i = 0; i < points.length; i++) 'P${i + 1}_C',
+        'hottest_$u',
+        'coldest_$u',
+        'centre_$u',
+        for (int i = 0; i < points.length; i++) 'P${i + 1}_$u',
       ].join(','));
     }
-    String t(double? v) => v == null || v.isNaN ? '' : v.toStringAsFixed(2);
+    String t(double? v) =>
+        v == null || v.isNaN ? '' : unit.fromCelsius(v).toStringAsFixed(2);
     double? num2(double? v) =>
         v == null || v.isNaN ? null : (v * 100).roundToDouble() / 100;
     final DateTime now = DateTime.now();

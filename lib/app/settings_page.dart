@@ -54,53 +54,7 @@ class SettingsPage extends StatelessWidget {
                 'all changes show live in the image.',
               ),
             ),
-            SwitchListTile(
-              title: const Text('Fixed temperature scale'),
-              subtitle: Text(
-                c.fixedScale
-                    ? '${c.fixedMin.toStringAsFixed(0)} … '
-                          '${c.fixedMax.toStringAsFixed(0)} °C'
-                    : 'Off: the scale follows the scene',
-              ),
-              value: c.fixedScale,
-              onChanged: (bool v) => c.applySetting('fixedScale', v),
-            ),
-            if (c.fixedScale)
-              RangeSlider(
-                values: RangeValues(
-                  c.fixedMin.clamp(-20, 450).toDouble(),
-                  c.fixedMax.clamp(-20, 450).toDouble(),
-                ),
-                min: -20,
-                max: 200,
-                divisions: 220,
-                labels: RangeLabels(
-                  '${c.fixedMin.toStringAsFixed(0)} °C',
-                  '${c.fixedMax.toStringAsFixed(0)} °C',
-                ),
-                onChanged: (RangeValues v) {
-                  if (v.end - v.start < 1) return;
-                  c.applySetting('fixedMin', v.start.roundToDouble());
-                  c.applySetting('fixedMax', v.end.roundToDouble());
-                },
-              ),
-            ListTile(
-              enabled: !c.fixedScale,
-              title: const Text('Minimum colour span'),
-              subtitle: Text(
-                'The scale never gets narrower than '
-                '${c.minSpan.toStringAsFixed(0)} °C, so evenly warm scenes '
-                'stay calm instead of showing sensor noise.',
-              ),
-            ),
-            Slider(
-              value: c.minSpan.clamp(0, 20).toDouble(),
-              min: 0,
-              max: 20,
-              divisions: 20,
-              label: '${c.minSpan.toStringAsFixed(0)} °C',
-              onChanged: c.fixedScale ? null : c.setMinSpan,
-            ),
+            _TemperatureSettings(c),
             const _Section('Shutter'),
             SwitchListTile(
               title: const Text('Automatic shutter'),
@@ -368,6 +322,101 @@ Future<void> measureLensShading(BuildContext context, ProbeController c) async {
   final String message = await c.calibrateFlatField();
   if (context.mounted) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+  }
+}
+
+/// Temperature unit, fixed scale and minimum colour span. The scale
+/// settings are stored in °C and shown and set in the chosen unit.
+class _TemperatureSettings extends StatelessWidget {
+  const _TemperatureSettings(this.c);
+
+  final ProbeController c;
+
+  @override
+  Widget build(BuildContext context) {
+    final TemperatureUnit unit = c.temperatureUnit;
+    // Slider ends of the fixed scale, -20..200 °C, in whole display units.
+    final double scaleMin = unit.fromCelsius(-20).roundToDouble();
+    final double scaleMax = unit.fromCelsius(200).roundToDouble();
+    final double spanMax = unit.spanFromCelsius(20).roundToDouble();
+    String whole(double celsius) =>
+        '${unit.fromCelsius(celsius).toStringAsFixed(0)} ${unit.symbol}';
+    return Column(
+      children: <Widget>[
+        ListTile(
+          title: const Text('Temperature unit'),
+          subtitle: Padding(
+            padding: const EdgeInsets.only(top: 8),
+            child: SegmentedButton<TemperatureUnit>(
+              showSelectedIcon: false,
+              segments: <ButtonSegment<TemperatureUnit>>[
+                for (final TemperatureUnit u in TemperatureUnit.values)
+                  ButtonSegment<TemperatureUnit>(
+                    value: u,
+                    label: Text(u.symbol),
+                  ),
+              ],
+              selected: <TemperatureUnit>{unit},
+              onSelectionChanged: (Set<TemperatureUnit> v) =>
+                  c.applySetting('temperatureUnit', v.first.name),
+            ),
+          ),
+        ),
+        SwitchListTile(
+          title: const Text('Fixed temperature scale'),
+          subtitle: Text(
+            c.fixedScale
+                ? '${unit.fromCelsius(c.fixedMin).toStringAsFixed(0)} … '
+                      '${whole(c.fixedMax)}'
+                : 'Off: the scale follows the scene',
+          ),
+          value: c.fixedScale,
+          onChanged: (bool v) => c.applySetting('fixedScale', v),
+        ),
+        if (c.fixedScale)
+          RangeSlider(
+            values: RangeValues(
+              unit.fromCelsius(c.fixedMin).clamp(scaleMin, scaleMax),
+              unit.fromCelsius(c.fixedMax).clamp(scaleMin, scaleMax),
+            ),
+            min: scaleMin,
+            max: scaleMax,
+            divisions: (scaleMax - scaleMin).round(),
+            labels: RangeLabels(whole(c.fixedMin), whole(c.fixedMax)),
+            onChanged: (RangeValues v) {
+              if (v.end - v.start < 1) return;
+              // Whole steps in the shown unit, stored in °C.
+              c.applySetting(
+                'fixedMin',
+                unit.toCelsius(v.start.roundToDouble()),
+              );
+              c.applySetting(
+                'fixedMax',
+                unit.toCelsius(v.end.roundToDouble()),
+              );
+            },
+          ),
+        ListTile(
+          enabled: !c.fixedScale,
+          title: const Text('Minimum colour span'),
+          subtitle: Text(
+            'The scale never gets narrower than '
+            '${unit.formatSpan(c.minSpan, digits: 0)}, so evenly warm scenes '
+            'stay calm instead of showing sensor noise.',
+          ),
+        ),
+        Slider(
+          value: unit.spanFromCelsius(c.minSpan).clamp(0, spanMax),
+          min: 0,
+          max: spanMax,
+          divisions: spanMax.round(),
+          label: unit.formatSpan(c.minSpan, digits: 0),
+          onChanged: c.fixedScale
+              ? null
+              : (double v) => c.setMinSpan(unit.spanToCelsius(v)),
+        ),
+      ],
+    );
   }
 }
 

@@ -79,6 +79,7 @@ SceneData? buildScene(
     labelOutline: c.labelOutline,
     scaleStyle: c.scaleStyle,
     scaleUnit: c.scaleUnit,
+    temperatureUnit: c.temperatureUnit,
     mirror: c.mirror,
     overlay: _overlayLayer(camera),
   );

@@ -18,7 +18,10 @@ VisibleCamera + OverlayEngine   phone-camera overlay, switched off
 ```
 
 Everything visible is drawn from one `SceneData`, so screen, photo, video and
-stream always match. Settings persist through `shared_preferences`: display
+stream always match. Temperatures stay in °C throughout (statistics,
+settings, stream); `SceneData` carries the chosen `TemperatureUnit` and the
+painter, settings page, diagnostics, CSV logger and browser viewer convert
+when they show or write a value. Settings persist through `shared_preferences`: display
 settings in `ViewSettings`, calibration in `CalibrationStore`, the automatic
 shutter switch in `ShutterControl`, capture, log and stream settings in
 `CaptureService` and `CsvLogger`.
@@ -63,6 +66,7 @@ tested: they need neither Flutter nor USB. The rest needs the camera, since
 | `lib/t2s/` | Pure Dart, unit tested, no Flutter UI. |
 | `t2s_frame.dart` | Xtherm frame layout, metadata, `CameraFamily`, `SensorProfile` |
 | `temperature_model.dart` | Radiometric model, counts → °C lookup table |
+| `temperature_unit.dart` | `TemperatureUnit`: °C, °F or K for display and export. The app computes, stores and streams °C and converts only where values are shown or written to CSV |
 | `camera_catalog.dart` | Known USB IDs, choice of protocol and video mode |
 | `t2s_commands.dart`, `tiny1c_commands.dart` | Command words of the two protocols |
 | `shutter_correction.dart` | V2 software shutter (non-uniformity) correction |

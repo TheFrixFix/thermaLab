@@ -39,6 +39,8 @@ control to any browser in your Wi-Fi.
   image, choose the palette, turn the whole display for landscape use, set the
   label outline, choose a detailed or simple colour bar
 - Fixed or automatic colour scale with a minimum span
+- **Temperatures in °C, °F or K** everywhere: image, colour bar, photos,
+  videos, browser view, CSV log
 
 ## Supported hardware
 
@@ -115,8 +117,8 @@ change shows live:
 - **Label outline**: shadow, normal or thick outline around marker labels
 - **Colour bar**: *Detailed* shows five labelled temperatures on a dark plate.
   *Simple* shows only the bar with its upper and lower limit in large labels,
-  all right-aligned. For the simple bar, **Colour bar unit location** puts °C
-  left of the bar, above, below, after both limits, or leaves it out.
+  all right-aligned. For the simple bar, **Colour bar unit location** puts the
+  unit (°C, °F or K) left of the bar, above, below, after both limits, or leaves it out.
 
 While the panel is open, drag the clock or the colour bar in the image to move
 it; both snap to the edges and the centre. **Done** saves the layout,
@@ -139,11 +141,13 @@ A second row of buttons appears:
   your files, cloud storage or send it.
 
 Each file starts with comment lines (`#`) describing the log. Whenever
-measurement points are added or moved, a line lists their positions, followed
-by a fresh column header:
+measurement points are added or moved, or the temperature unit is changed, a
+line lists their positions, another names the unit, and a fresh column header
+follows. Column names end in the unit: `_C`, `_F` or `_K`.
 
 ```
 # points: P1=(120,80) P2=(40,150)
+# temperatures in degrees Celsius, empty = no value
 time,elapsed_s,hottest_C,coldest_C,centre_C,P1_C,P2_C
 2026-11-06 09:40:01,3.0,26.14,23.71,24.95,24.80,25.10
 ```
@@ -190,15 +194,18 @@ preview line shows the resulting name. The **?** button lists all placeholders:
 | `{date}` `{time}` `{datetime}` | `2026-11-06`, `14-30-05`, `2026-11-06_14-30-05` |
 | `{yyyy}` `{yy}` `{MM}` `{dd}` `{HH}` `{mm}` `{ss}` | date and time parts |
 | `{n}`, `{n:3}` | running number, optionally zero-padded (`007`) |
-| `{max}` `{min}` `{centre}` | temperatures, e.g. `41.2C` |
+| `{max}` `{min}` `{centre}` | temperatures with unit letter, e.g. `41.2C`, `106.2F` |
 | `{p1}` `{p2}` … | temperature of a measurement point |
 | `{palette}` | colour palette name |
 
 ### Settings
 
-- **Display**: fixed temperature scale (min/max) and minimum colour span
-  (keeps evenly warm scenes calm instead of showing sensor noise). Everything
-  else about the look is in the edit mode.
+- **Display**: temperature unit (°C, °F or K), fixed temperature scale
+  (min/max) and minimum colour span (keeps evenly warm scenes calm instead of
+  showing sensor noise), both set in the chosen unit. Everything else about
+  the look is in the edit mode. The unit also applies to the browser view,
+  the CSV log and the known temperature in *Diagnostics*; it can be switched
+  from the browser too.
 - **Shutter**: automatic shutter, lens shading correction, *Measure lens
   shading*
 - **Temperature log**: CSV logging and interval

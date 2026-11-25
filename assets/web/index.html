@@ -149,7 +149,7 @@
         <tr><td><code>{HH} {mm} {ss}</code></td><td>hour, minute, second</td></tr>
         <tr><td><code>{n}</code></td><td>running number (1, 2, 3 …)</td></tr>
         <tr><td><code>{n:3}</code></td><td>running number with 3 digits (001)</td></tr>
-        <tr><td><code>{max} {min} {centre}</code></td><td>hottest, coldest, centre temperature (23.4C)</td></tr>
+        <tr><td><code>{max} {min} {centre}</code></td><td>hottest, coldest, centre temperature with unit letter (23.4C, 74.1F)</td></tr>
         <tr><td><code>{p1} {p2} …</code></td><td>temperature of measurement point 1, 2 …</td></tr>
         <tr><td><code>{palette}</code></td><td>colour palette name</td></tr>
       </table>
@@ -162,11 +162,13 @@
     <aside id="settings" class="panel" aria-label="Display settings">
       <h2>Display settings <button id="closeSettings" aria-label="Close">✕</button></h2>
       <div class="row"><label for="sPalette">Colour palette</label><select id="sPalette"></select></div>
+      <div class="row"><label for="sTempUnit">Temperature unit</label>
+        <select id="sTempUnit"><option value="celsius">°C</option><option value="fahrenheit">°F</option><option value="kelvin">K</option></select></div>
       <div class="row"><label>Rotation</label><button id="sRotate">Rotate 90°</button> <span id="sRotation"></span></div>
       <div class="row"><label><input type="checkbox" id="sMirror"> Mirror image</label></div>
       <div class="row"><label><input type="checkbox" id="sFixed"> Fixed temperature scale</label>
-        <div class="inline"><input type="number" id="sMin" step="1"> … <input type="number" id="sMax" step="1"> °C</div></div>
-      <div class="row"><label for="sSpan">Minimum colour span: <span id="sSpanVal"></span> °C</label>
+        <div class="inline"><input type="number" id="sMin" step="1"> … <input type="number" id="sMax" step="1"> <span class="tUnit">°C</span></div></div>
+      <div class="row"><label for="sSpan">Minimum colour span: <span id="sSpanVal"></span> <span class="tUnit">°C</span></label>
         <input type="range" id="sSpan" min="0" max="20" step="1"></div>
       <div class="row"><label>Show in the image</label>
         <label><input type="checkbox" id="lClock"> Clock</label>
@@ -406,7 +408,7 @@ function load(k, d) { try { const v = localStorage.getItem(k); return v === null
 // Placeholder values for the current frame and time.
 function placeholders(n) {
   const now = new Date(), p2 = (v) => String(v).padStart(2, '0');
-  const t = (v) => (v === null || v === undefined ? 'NA' : v.toFixed(1) + 'C');
+  const t = (v) => (v === null || v === undefined ? 'NA' : tu().from(v).toFixed(1) + tu().letter);
   const vals = {
     yyyy: String(now.getFullYear()), yy: String(now.getFullYear()).slice(2),
     MM: p2(now.getMonth() + 1), dd: p2(now.getDate()),
@@ -485,7 +487,14 @@ async function downloadCsv() {
 }
 
 const COLORS = { centre: '#ffffff', hottest: '#ff5252', coldest: '#40c4ff', user: '#ffeb3b' };
-function fmt(t) { return t === null || t === undefined ? '--' : t.toFixed(1) + '°'; }
+// Display units; the phone always sends °C. Mirrors temperature_unit.dart.
+const UNITS = {
+  celsius: { symbol: '°C', letter: 'C', mark: '°', span: 1, from: (c) => c, to: (v) => v },
+  fahrenheit: { symbol: '°F', letter: 'F', mark: '°', span: 9 / 5, from: (c) => c * 9 / 5 + 32, to: (v) => (v - 32) * 5 / 9 },
+  kelvin: { symbol: 'K', letter: 'K', mark: ' K', span: 1, from: (c) => c + 273.15, to: (v) => v - 273.15 },
+};
+function tu() { return (frame && UNITS[frame.h.settings.temperatureUnit]) || UNITS.celsius; }
+function fmt(t) { return t === null || t === undefined ? '--' : tu().from(t).toFixed(1) + tu().mark; }
 function label(text, x, y, size, color, outline, align = 'left') {
   ctx.font = `600 ${size}px system-ui, -apple-system, "Segoe UI", Roboto, sans-serif`;
   ctx.textAlign = align; ctx.textBaseline = 'middle';
@@ -552,8 +561,9 @@ function drawScale(h, unit, layout) {
   const barW = 9 * unit, barH = Math.min(r.h * 0.42, 170 * unit);
   const ticks = 5, size = 10.5 * unit, unitSize = 10 * unit;
   ctx.font = `500 ${size}px system-ui, sans-serif`;
+  const U = tu(), hi = U.from(h.hi), lo = U.from(h.lo);
   const labels = [];
-  for (let i = 0; i < ticks; i++) labels.push((h.hi - (h.hi - h.lo) * i / (ticks - 1)).toFixed(1));
+  for (let i = 0; i < ticks; i++) labels.push((hi - (hi - lo) * i / (ticks - 1)).toFixed(1));
   const lw = Math.max(...labels.map((l) => ctx.measureText(l).width));
   const top = 6 * unit + unitSize * 1.2 + 2 * unit;
   const plateW = lw + 10 * unit + barW + 4 * unit, plateH = top + barH + 8 * unit;
@@ -578,7 +588,7 @@ function drawScale(h, unit, layout) {
   }
   ctx.textAlign = 'center'; ctx.textBaseline = 'bottom'; ctx.fillStyle = 'rgba(255,255,255,.7)';
   ctx.font = `500 ${unitSize}px system-ui, sans-serif`;
-  ctx.fillText('°C', bx + barW / 2, by - 2 * unit);
+  ctx.fillText(U.symbol, bx + barW / 2, by - 2 * unit);
 }
 // Simple colour bar: the bar between its limits on plates, unit placed by
 // `where` (side, above, below, inPills, hidden), all right-aligned.
@@ -587,15 +597,15 @@ function drawSimpleScale(h, unit, layout, where) {
   const r = imageRect, inPills = where === 'inPills';
   const font = (size) => `600 ${size}px system-ui, sans-serif`;
   const limitSize = (inPills ? 13 : 15.5) * unit, unitSize = 14 * unit;
-  const suffix = inPills ? '°C' : '';
-  const hi = h.hi.toFixed(1) + suffix, lo = h.lo.toFixed(1) + suffix;
+  const U = tu(), suffix = inPills ? U.symbol : '';
+  const hi = U.from(h.hi).toFixed(1) + suffix, lo = U.from(h.lo).toFixed(1) + suffix;
   ctx.font = font(limitSize);
   const padX = 4.8 * unit, padY = 2.5 * unit, gap = 3 * unit, radius = 3 * unit;
   const pillW = Math.max(ctx.measureText(hi).width, ctx.measureText(lo).width) + 2 * padX;
   const pillH = limitSize * 1.2 + 2 * padY;
   const hasUnit = !inPills && where !== 'hidden';
   ctx.font = font(unitSize);
-  const uw = hasUnit ? ctx.measureText('°C').width + 2 * padX : 0;
+  const uw = hasUnit ? ctx.measureText(U.symbol).width + 2 * padX : 0;
   const uh = hasUnit ? unitSize * 1.2 + 2 * padY : 0;
   const barW = 12 * unit, barH = Math.min(r.h * 0.44, 180 * unit);
   const w = Math.max(pillW, where === 'side' ? barW + uw : Math.max(barW, uw));
@@ -629,9 +639,9 @@ function drawSimpleScale(h, unit, layout, where) {
   plate(hi, right, pos.y + above + pillH / 2, pillW, pillH, limitSize, [false, true]);
   plate(lo, right, by + barH + pillH / 2, pillW, pillH, limitSize, [true, false]);
   if (!hasUnit) return;
-  if (where === 'side') plate('°C', right - barW, by + barH / 2, uw, uh, unitSize, [true, true]);
-  else if (where === 'above') plate('°C', right, pos.y + uh / 2, uw, uh, unitSize);
-  else plate('°C', right, pos.y + total - uh / 2, uw, uh, unitSize);
+  if (where === 'side') plate(U.symbol, right - barW, by + barH / 2, uw, uh, unitSize, [true, true]);
+  else if (where === 'above') plate(U.symbol, right, pos.y + uh / 2, uw, uh, unitSize);
+  else plate(U.symbol, right, pos.y + total - uh / 2, uw, uh, unitSize);
 }
 function drawTimestamp(text, layout, unit) {
   const size = 11 * unit;
@@ -696,11 +706,16 @@ function syncControls(h) {
   }
   setIfIdle(pal, 'value', s.palette);
   $('sRotation').textContent = `${s.quarterTurns * 90}°`;
+  // Scale settings are kept in °C and shown in whole display units.
+  const U = tu();
+  setIfIdle($('sTempUnit'), 'value', s.temperatureUnit || 'celsius');
+  for (const el of document.querySelectorAll('.tUnit')) el.textContent = U.symbol;
   setIfIdle($('sFixed'), 'checked', s.fixedScale);
-  setIfIdle($('sMin'), 'value', s.fixedMin);
-  setIfIdle($('sMax'), 'value', s.fixedMax);
-  setIfIdle($('sSpan'), 'value', s.minSpan);
-  $('sSpanVal').textContent = Math.round(s.minSpan);
+  setIfIdle($('sMin'), 'value', Math.round(U.from(s.fixedMin)));
+  setIfIdle($('sMax'), 'value', Math.round(U.from(s.fixedMax)));
+  $('sSpan').max = String(Math.round(20 * U.span));
+  setIfIdle($('sSpan'), 'value', U.span * s.minSpan);
+  $('sSpanVal').textContent = Math.round(U.span * s.minSpan);
   const lay = s.layout || {};
   for (const [id, key] of LAYOUT_TOGGLES) setIfIdle($(id), 'checked', lay[key] !== false);
   setIfIdle($('sOutline'), 'value', String(s.labelOutline));
@@ -752,9 +767,10 @@ $('bSize').onchange = (e) => { sizeFactor = parseFloat(e.target.value); if (fram
 $('sPalette').onchange = (e) => set('palette', e.target.value);
 $('sRotate').onclick = () => frame && set('quarterTurns', (frame.h.settings.quarterTurns + 1) % 4);
 $('sFixed').onchange = (e) => set('fixedScale', e.target.checked);
-$('sMin').onchange = (e) => set('fixedMin', parseFloat(e.target.value));
-$('sMax').onchange = (e) => set('fixedMax', parseFloat(e.target.value));
-$('sSpan').oninput = (e) => set('minSpan', parseFloat(e.target.value));
+$('sTempUnit').onchange = (e) => set('temperatureUnit', e.target.value);
+$('sMin').onchange = (e) => set('fixedMin', tu().to(parseFloat(e.target.value)));
+$('sMax').onchange = (e) => set('fixedMax', tu().to(parseFloat(e.target.value)));
+$('sSpan').oninput = (e) => set('minSpan', parseFloat(e.target.value) / tu().span);
 const LAYOUT_TOGGLES = [['lClock', 'showClock'], ['lScale', 'showScale'], ['lCentre', 'showCentre'],
   ['lHot', 'showHottest'], ['lCold', 'showColdest']];
 for (const [id, key] of LAYOUT_TOGGLES) $(id).onchange = (e) => set('layout', { [key]: e.target.checked });
@@ -849,7 +865,8 @@ function showTip(px, py) {
   const tip = $('tip');
   if (!frame || !imageRect || !inImage(px, py)) { tip.style.display = 'none'; return; }
   const [x, y] = toSensor(px, py);
-  tip.textContent = (frame.temps[y * frame.h.w + x] / 10).toFixed(1) + ' °C';
+  const U = tu();
+  tip.textContent = U.from(frame.temps[y * frame.h.w + x] / 10).toFixed(1) + ' ' + U.symbol;
   tip.style.left = (px + 14) + 'px'; tip.style.top = (py + 14) + 'px';
   tip.style.display = 'block';
 }
@@ -861,7 +878,8 @@ const SERIES = [
   { key: 'centre', label: 'Centre', color: '#ffffff' },
 ];
 const POINT_COLORS = ['#ffeb3b', '#a5d6a7', '#ffab91', '#ce93d8', '#80deea', '#fff59d', '#bcaaa4', '#f48fb1'];
-let logName = null, logRows = [], logFetching = false, logColumns = '';
+// Log rows arrive in °C and are shown in the current display unit.
+let logName = null, logRows = [], logFetching = false, logColumns = '', logUnit = null;
 let logVisible = load('t2s.showLog', '1') === '1';
 $('showGraph').checked = load('t2s.showGraph', '0') === '1';
 document.body.classList.toggle('show-graph', $('showGraph').checked);
@@ -874,7 +892,10 @@ function pointLabels() {
 function seriesList() {
   return SERIES.concat(pointLabels().map((l, i) => ({ key: l, label: l, color: POINT_COLORS[i % POINT_COLORS.length], point: true })));
 }
-function valueOf(row, s) { return s.point ? (row.points || {})[s.key] : row[s.key]; }
+function valueOf(row, s) {
+  const v = s.point ? (row.points || {})[s.key] : row[s.key];
+  return v === null || v === undefined ? v : tu().from(v);
+}
 function cell(v) { return v === null || v === undefined ? '–' : v.toFixed(2); }
 
 function updateLogFromHeader(csv) {
@@ -883,6 +904,7 @@ function updateLogFromHeader(csv) {
   $('bLog').style.display = has || (csv && csv.enabled) ? '' : 'none';
   if (!has) return;
   if (csv.log !== logName) { logName = csv.log; logRows = []; logColumns = ''; renderTable(true); }
+  if (tu() !== logUnit) { logUnit = tu(); renderTable(true); drawGraph(); }
   if (csv.tableRows > logRows.length && !logFetching) fetchLog();
 }
 async function fetchLog() {
@@ -906,7 +928,7 @@ function renderTable(reset, added) {
   const columns = series.map((s) => s.key).join(',');
   const thead = $('logTable').tHead, tbody = $('logTable').tBodies[0];
   $('logEmpty').style.display = logRows.length ? 'none' : 'block';
-  $('logInfo').textContent = logRows.length ? `°C · ${logRows.length} rows · ${logName}` : '';
+  $('logInfo').textContent = logRows.length ? `${tu().symbol} · ${logRows.length} rows · ${logName}` : '';
   if (reset || columns !== logColumns) {
     logColumns = columns;
     thead.innerHTML = '<tr><th>Time</th><th>s</th>' + series.map((s) =>

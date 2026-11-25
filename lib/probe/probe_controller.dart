@@ -15,6 +15,7 @@ import '../t2s/shutter_correction.dart';
 import '../t2s/t2s_commands.dart';
 import '../t2s/t2s_frame.dart';
 import '../t2s/temperature_model.dart';
+import '../t2s/temperature_unit.dart';
 import 'calibration_store.dart';
 import 'camera_connection.dart';
 import 'frame_processor.dart';
@@ -27,6 +28,7 @@ import 'view_settings.dart';
 export 'camera_connection.dart' show kKnownV2UsbIds, usbId;
 export 'frame_processor.dart' show DisplaySource, FrameStats;
 export 'measure_point.dart' show MeasurePoint;
+export '../t2s/temperature_unit.dart' show TemperatureUnit;
 
 /// The app's central state, used by every screen and by capture. Owns
 /// the parts below, wires them together (the connect sequence, the frame
@@ -211,7 +213,8 @@ class ProbeController extends ChangeNotifier {
 
   /// Measures the lens shading on a uniform surface. Returns a message for
   /// the user.
-  Future<String> calibrateFlatField() => _calibration.calibrateFlatField();
+  Future<String> calibrateFlatField() =>
+      _calibration.calibrateFlatField(_view.temperatureUnit);
 
   /// One-point calibration: makes the measured spot (tap point, else the
   /// centre) read [knownCelsius].
@@ -269,6 +272,7 @@ class ProbeController extends ChangeNotifier {
   int get labelOutline => _view.labelOutline;
   ScaleStyle get scaleStyle => _view.scaleStyle;
   ScaleUnit get scaleUnit => _view.scaleUnit;
+  TemperatureUnit get temperatureUnit => _view.temperatureUnit;
   bool get flatFieldEnabled => _view.flatFieldEnabled;
   bool get mirror => _view.mirror;
 

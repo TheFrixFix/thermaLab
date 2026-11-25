@@ -4,6 +4,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../render/palette.dart';
 import '../render/scene_layout.dart';
+import '../t2s/temperature_unit.dart';
 import 'frame_processor.dart';
 
 /// Display settings (how the picture and its overlays look) and their
@@ -49,6 +50,9 @@ class ViewSettings {
   ScaleStyle scaleStyle = ScaleStyle.detailed;
   ScaleUnit scaleUnit = ScaleUnit.side;
 
+  /// Unit temperatures are shown and exported in. Settings stay in °C.
+  TemperatureUnit temperatureUnit = TemperatureUnit.celsius;
+
   /// Apply the lens shading correction, if one was measured.
   bool flatFieldEnabled = true;
 
@@ -87,6 +91,11 @@ class ViewSettings {
       prefs.getString('scaleUnit'),
       ScaleUnit.side,
     );
+    temperatureUnit = enumByName(
+      TemperatureUnit.values,
+      prefs.getString('temperatureUnit'),
+      TemperatureUnit.celsius,
+    );
     mirror = prefs.getBool('mirror') ?? false;
     viewTurns = prefs.getInt('viewTurns') ?? 0;
     flatFieldEnabled = prefs.getBool('flatFieldEnabled') ?? true;
@@ -112,6 +121,7 @@ class ViewSettings {
     'labelOutline': labelOutline,
     'scaleStyle': scaleStyle.name,
     'scaleUnit': scaleUnit.name,
+    'temperatureUnit': temperatureUnit.name,
     'autoShutter': autoShutter,
     'mirror': mirror,
     'flatField': flatFieldEnabled,
@@ -172,6 +182,13 @@ class ViewSettings {
       case 'scaleUnit':
         scaleUnit = enumByName(ScaleUnit.values, value, scaleUnit);
         await prefs.setString('scaleUnit', scaleUnit.name);
+      case 'temperatureUnit':
+        temperatureUnit = enumByName(
+          TemperatureUnit.values,
+          value,
+          temperatureUnit,
+        );
+        await prefs.setString('temperatureUnit', temperatureUnit.name);
       case 'autoShutter':
         if (value is bool) await setAutoShutter(value);
         return;

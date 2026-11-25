@@ -177,6 +177,7 @@ class _ProbePageState extends State<ProbePage> {
                     stats: c.stats,
                     point: c.point,
                     quarterTurns: turns,
+                    unit: c.temperatureUnit,
                   ),
                 ),
               ],
@@ -193,7 +194,7 @@ class _ProbePageState extends State<ProbePage> {
     final bool temp = c.displaySource == DisplaySource.temperature &&
         !s.centerTemp.isNaN;
     String fmt(double v) =>
-        temp ? '${v.toStringAsFixed(1)} °C' : v.toStringAsFixed(0);
+        temp ? c.temperatureUnit.format(v) : v.toStringAsFixed(0);
     return Row(
       children: <Widget>[
         SizedBox(width: 72, child: Text(fmt(s.scaleLow))),
@@ -226,7 +227,7 @@ class _ProbePageState extends State<ProbePage> {
     final FrameStats? s = c.stats;
     if (s == null) return const SizedBox.shrink();
     String t(double? v) =>
-        v == null ? '–' : (v.isNaN ? 'NaN' : '${v.toStringAsFixed(1)} °C');
+        v == null ? '–' : (v.isNaN ? 'NaN' : c.temperatureUnit.format(v));
     Widget cell(String label, String value, String sub) => Expanded(
       child: Column(
         children: <Widget>[
@@ -306,16 +307,16 @@ class _ProbePageState extends State<ProbePage> {
         ),
         const SizedBox(height: 8),
         SegmentedButton<DisplaySource>(
-          segments: const <ButtonSegment<DisplaySource>>[
+          segments: <ButtonSegment<DisplaySource>>[
             ButtonSegment<DisplaySource>(
               value: DisplaySource.temperature,
-              label: Text('°C'),
+              label: Text(c.temperatureUnit.symbol),
             ),
-            ButtonSegment<DisplaySource>(
+            const ButtonSegment<DisplaySource>(
               value: DisplaySource.correctedCounts,
               label: Text('Corrected'),
             ),
-            ButtonSegment<DisplaySource>(
+            const ButtonSegment<DisplaySource>(
               value: DisplaySource.rawCounts,
               label: Text('Raw counts'),
             ),
@@ -422,6 +423,8 @@ class _ProbePageState extends State<ProbePage> {
 
   Future<void> _askCalibration() async {
     final TextEditingController input = TextEditingController();
+    // Entered in the display unit; the calibration works in °C.
+    final TemperatureUnit unit = c.temperatureUnit;
     final double? value = await showDialog<double>(
       context: context,
       builder: (BuildContext context) => AlertDialog(
@@ -444,7 +447,7 @@ class _ProbePageState extends State<ProbePage> {
                 signed: true,
                 decimal: true,
               ),
-              decoration: const InputDecoration(suffixText: '°C'),
+              decoration: InputDecoration(suffixText: unit.symbol),
             ),
           ],
         ),
@@ -463,7 +466,7 @@ class _ProbePageState extends State<ProbePage> {
         ],
       ),
     );
-    if (value != null) await c.calibrateTo(value);
+    if (value != null) await c.calibrateTo(unit.toCelsius(value));
   }
 
   Widget _metadata() {
@@ -528,6 +531,7 @@ class _OverlayPainter extends CustomPainter {
     required this.stats,
     required this.point,
     required this.quarterTurns,
+    required this.unit,
   });
 
   final int width;
@@ -535,6 +539,7 @@ class _OverlayPainter extends CustomPainter {
   final FrameStats? stats;
   final (int, int)? point;
   final int quarterTurns;
+  final TemperatureUnit unit;
 
   @override
   void paint(Canvas canvas, Size size) {
@@ -576,7 +581,9 @@ class _OverlayPainter extends CustomPainter {
       tp.paint(canvas, o + const Offset(6, 4));
     }
 
-    String t(double v) => v.isNaN ? '' : '${v.toStringAsFixed(1)}°';
+    String t(double v) => v.isNaN
+        ? ''
+        : '${unit.fromCelsius(v).toStringAsFixed(1)}${unit.markSuffix}';
     cross(at((width ~/ 2, height ~/ 2)), Colors.white, t(s.centerTemp));
     cross(at(s.hottest), Colors.redAccent, t(s.maxTemp));
     cross(at(s.coldest), Colors.lightBlueAccent, t(s.minTemp));
