@@ -21,8 +21,10 @@ import '../t2s/t2s_frame.dart';
 import '../t2s/temperature_model.dart';
 import '../t2s/tiny1c_commands.dart';
 import 'frame_processor.dart';
+import 'measure_point.dart';
 
 export 'frame_processor.dart' show DisplaySource, FrameStats;
+export 'measure_point.dart' show MeasurePoint;
 
 /// USB IDs of cameras known to be T2S+ V2 units.
 final Set<String> kKnownV2UsbIds = <String>{
@@ -86,9 +88,9 @@ class ProbeController extends ChangeNotifier {
   double minSpan = 10.0;
 
   /// User measurement points in sensor coordinates.
-  final List<MeasurePoint> measurePoints = <MeasurePoint>[];
-  int _nextPointId = 1;
-  static const int maxMeasurePoints = 8;
+  final MeasurePoints _points = MeasurePoints();
+  List<MeasurePoint> get measurePoints => _points.points;
+  static const int maxMeasurePoints = MeasurePoints.max;
 
   /// Incremented whenever a new [image] is ready; capture and streaming
   /// listen to this instead of to every state change.
@@ -371,22 +373,18 @@ class ProbeController extends ChangeNotifier {
   // ---------------------------------------------------------------------
 
   MeasurePoint? addMeasurePoint(int x, int y) {
-    if (measurePoints.length >= maxMeasurePoints) return null;
-    final MeasurePoint p = MeasurePoint(_nextPointId++, x, y);
-    measurePoints.add(p);
-    notifyListeners();
+    final MeasurePoint? p = _points.add(x, y);
+    if (p != null) notifyListeners();
     return p;
   }
 
   void moveMeasurePoint(MeasurePoint p, int x, int y) {
-    p
-      ..x = x
-      ..y = y;
+    _points.move(p, x, y);
     notifyListeners();
   }
 
   void removeMeasurePoint(MeasurePoint p) {
-    measurePoints.remove(p);
+    _points.remove(p);
     notifyListeners();
   }
 
@@ -1310,13 +1308,4 @@ class ProbeController extends ChangeNotifier {
     unawaited(disconnect(keepLog: true));
     super.dispose();
   }
-}
-
-/// A user measurement point, in sensor coordinates.
-class MeasurePoint {
-  MeasurePoint(this.id, this.x, this.y);
-
-  final int id;
-  int x;
-  int y;
 }
