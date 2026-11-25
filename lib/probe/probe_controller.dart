@@ -1,14 +1,11 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/foundation.dart';
 import 'package:flutter_ffi_uvc/flutter_ffi_uvc.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../render/palette.dart';
@@ -22,6 +19,7 @@ import '../t2s/temperature_model.dart';
 import '../t2s/tiny1c_commands.dart';
 import 'frame_processor.dart';
 import 'measure_point.dart';
+import 'snapshot_export.dart';
 import 'view_settings.dart';
 
 export 'frame_processor.dart' show DisplaySource, FrameStats;
@@ -1051,120 +1049,7 @@ class ProbeController extends ChangeNotifier {
 
   /// Writes the current raw frame plus a JSON report and opens the share
   /// sheet, so the data can be analysed elsewhere.
-  Future<void> exportSnapshot() async {
-    final T2sFrame? f = frame;
-    if (f == null) {
-      log('Nothing to export yet');
-      return;
-    }
-    try {
-      final Directory dir = await getTemporaryDirectory();
-      final String stamp = DateTime.now()
-          .toIso8601String()
-          .replaceAll(':', '-')
-          .split('.')
-          .first;
-      final File bin = File('${dir.path}/t2s_frame_$stamp.bin');
-      await bin.writeAsBytes(f.rawBytes);
-      final List<File> files = <File>[bin];
-      if (correction != null) {
-        final File ref = File('${dir.path}/t2s_shutter_reference_$stamp.f32');
-        await ref.writeAsBytes(correction!.reference.buffer.asUint8List());
-        files.add(ref);
-      }
-
-      final TemperatureTable? t = table;
-      final FrameStats? s = stats;
-      final Map<String, Object?> report = <String, Object?>{
-        'app': 'thermaLab diagnostics',
-        'timestamp': DateTime.now().toIso8601String(),
-        'device': device == null
-            ? null
-            : <String, Object?>{
-                'usbId': usbId(device!.vendorId, device!.productId),
-                'manufacturer': device!.manufacturerName,
-                'product': device!.productName,
-                'serial': device!.serialNumber,
-              },
-        'modes': modes.map((UvcCameraMode m) => m.label).toList(),
-        'mode': mode?.label,
-        'frame': <String, Object?>{
-          'width': f.width,
-          'imageHeight': f.height,
-          'bytes': f.rawBytes.length,
-          'fps': fps,
-          'framesReceived': framesReceived,
-          'undecodableFrames': undecodableFrames,
-        },
-        'settings': <String, Object?>{
-          'revision': settings.revision.name,
-          'range': settings.range.name,
-          'shutterOffset': settings.shutterOffset,
-          'userOffset': settings.userOffset,
-          'shutterCorrection': correction != null,
-          'deadPixels': correction?.deadPixels.length,
-        },
-        'family': family.name,
-        'camera': cameraName,
-        'metadata': f.meta?.toJson(),
-        'fpaTemp': f.meta?.fpaTemp(f.profile!),
-        'model': t == null
-            ? null
-            : <String, Object?>{
-                'shutterTempUsed': t.shutterTemp,
-                'nanCount': t.nanCount,
-                'samples': <String, double>{
-                  for (int c = 0; c < kTableSize; c += 1024)
-                    '$c': t.values[c],
-                },
-              },
-        'stats': s == null
-            ? null
-            : <String, Object?>{
-                'minCount': s.minCount,
-                'maxCount': s.maxCount,
-                'meanCount': s.meanCount,
-                'stdDev': s.stdDev,
-                'centerCount': s.centerCount,
-                'centerTemp': s.centerTemp,
-                'centerTempAlt': s.centerTempAlt,
-                'minTemp': s.minTemp,
-                'maxTemp': s.maxTemp,
-                'point': point == null ? null : <int>[point!.$1, point!.$2],
-                'pointTemp': s.pointTemp,
-                'pointTempAlt': s.pointTempAlt,
-              },
-        'log': logLines,
-      };
-      final File json = File('${dir.path}/t2s_report_$stamp.json');
-      await json.writeAsString(
-        const JsonEncoder.withIndent('  ').convert(report),
-      );
-      files.add(json);
-
-      final ui.Image? img = image;
-      if (img != null) {
-        final ByteData? png = await img.toByteData(
-          format: ui.ImageByteFormat.png,
-        );
-        if (png != null) {
-          final File pngFile = File('${dir.path}/t2s_image_$stamp.png');
-          await pngFile.writeAsBytes(png.buffer.asUint8List());
-          files.add(pngFile);
-        }
-      }
-
-      await SharePlus.instance.share(
-        ShareParams(
-          files: files.map((File file) => XFile(file.path)).toList(),
-          text: 'thermaLab diagnostics snapshot $stamp',
-        ),
-      );
-      log('Exported ${files.length} files');
-    } catch (e) {
-      log('Export failed: $e');
-    }
-  }
+  Future<void> exportSnapshot() => exportDiagnostics(this);
 
   @override
   void dispose() {
