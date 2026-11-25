@@ -94,12 +94,12 @@ tested: they need neither Flutter nor USB. The rest needs the camera, since
 | `scene_builder.dart` | `buildScene()`: controller state → `SceneData` |
 | `overlay_calibration_page.dart` | Overlay calibration (hidden feature) |
 | `lib/capture/` | |
-| `capture_service.dart` | Photo, video, stream, remote commands from the browser; method channel `t2s_thermal/video` |
+| `capture_service.dart` | Photo, video (with optional microphone sound), stream, remote commands from the browser; method channel `t2s_thermal/video`, which also asks for the microphone permission, only when the user switches sound on |
 | `csv_logger.dart` | CSV temperature log |
 | `live_server.dart` | HTTP and WebSocket server, see [web-protocol.md](web-protocol.md) |
 | `lib/overlay/` | Phone-camera overlay (edges or blend, automatic alignment), switched off in `overlay_feature.dart`: too slow, and with the cameras ~10 cm apart and no depth data one calibration fits one distance only. `visible_camera.dart` (phone camera), `alignment.dart` (image matching), `overlay_engine.dart` (calibration and tracking) |
 | `assets/web/index.html` | Browser viewer, one file, no external resources |
-| `android/app/src/main/kotlin/…/` | `MainActivity.kt` (channel), `VideoEncoder.kt` (H.264) |
+| `android/app/src/main/kotlin/…/` | `MainActivity.kt` (channel, microphone permission), `VideoEncoder.kt` (H.264 from Flutter frames plus an optional AAC microphone track; both are stamped on the same monotonic clock, and the muxer holds samples back until both tracks have a format and drops sound from before the first frame) |
 | `packages/flutter_ffi_uvc/` | Vendored libuvc plugin; changes listed in its `FORK.md` |
 | `test/` | Unit tests, mostly for `lib/t2s/`, `lib/render/`, `frame_processor.dart` and the revision check in `shutter_control.dart`; `t2s_fixture.dart` builds fake frames |
 | `tools/make_icon.py` | Generates the app icon |

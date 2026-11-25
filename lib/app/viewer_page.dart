@@ -97,7 +97,6 @@ class _ViewerPageState extends State<ViewerPage> {
   static const double _grabRadius = 32;
   static const double _trashSize = 56;
 
-
   void _toast(String? error, String success) {
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
@@ -124,24 +123,23 @@ class _ViewerPageState extends State<ViewerPage> {
   /// Second row: optional tools (CSV logging, camera overlay).
   Widget _secondaryBar() {
     final CsvLogger csv = capture.csv;
-    final bool ready =
-        c.streaming && c.image != null && !c.calibrationPending;
+    final bool ready = c.streaming && c.image != null && !c.calibrationPending;
     final List<Widget> items = <Widget>[
       if (kCameraOverlayEnabled)
         _ChipButton(
-        icon: camera.enabled ? Icons.layers : Icons.layers_outlined,
-        label: camera.starting
-            ? 'Overlay…'
-            : (camera.calibrated == null && camera.enabled
-                  ? 'Overlay (not calibrated)'
-                  : 'Overlay'),
-        active: camera.enabled,
-        activeColor: Colors.teal,
-        onPressed: () async {
-          await camera.setEnabled(!camera.enabled);
-          if (camera.error != null && mounted) _toast(camera.error, '');
-        },
-      ),
+          icon: camera.enabled ? Icons.layers : Icons.layers_outlined,
+          label: camera.starting
+              ? 'Overlay…'
+              : (camera.calibrated == null && camera.enabled
+                    ? 'Overlay (not calibrated)'
+                    : 'Overlay'),
+          active: camera.enabled,
+          activeColor: Colors.teal,
+          onPressed: () async {
+            await camera.setEnabled(!camera.enabled);
+            if (camera.error != null && mounted) _toast(camera.error, '');
+          },
+        ),
     ];
     if (csv.enabled) {
       final Duration d = csv.elapsed;
@@ -196,6 +194,11 @@ class _ViewerPageState extends State<ViewerPage> {
     if (error != null && mounted) _toast(error, '');
   }
 
+  Future<void> _toggleAudio() async {
+    final String? error = await capture.setRecordAudio(!capture.recordAudio);
+    if (error != null && mounted) _toast(error, '');
+  }
+
   void _release() {
     if (_videoMode || capture.recording) {
       _toggleRecording();
@@ -207,9 +210,12 @@ class _ViewerPageState extends State<ViewerPage> {
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: Listenable.merge(
-        <Listenable>[c, capture, capture.csv, camera],
-      ),
+      listenable: Listenable.merge(<Listenable>[
+        c,
+        capture,
+        capture.csv,
+        camera,
+      ]),
       builder: (BuildContext context, _) => Scaffold(
         backgroundColor: Colors.black,
         body: SafeArea(
@@ -229,12 +235,14 @@ class _ViewerPageState extends State<ViewerPage> {
   Widget _topBar() {
     final List<Widget> chips = <Widget>[];
     if (capture.streaming) {
-      chips.add(_Badge(
-        color: Colors.teal,
-        text: capture.liveServer.hasViewers
-            ? 'LIVE · ${capture.liveServer.viewerCount}'
-            : 'LIVE',
-      ));
+      chips.add(
+        _Badge(
+          color: Colors.teal,
+          text: capture.liveServer.hasViewers
+              ? 'LIVE · ${capture.liveServer.viewerCount}'
+              : 'LIVE',
+        ),
+      );
     }
     if (c.busy && c.streaming) {
       chips.add(const _Badge(color: Colors.blueGrey, text: 'Shutter…'));
@@ -260,7 +268,9 @@ class _ViewerPageState extends State<ViewerPage> {
             Padding(padding: const EdgeInsets.only(right: 8), child: w),
           IconButton(
             tooltip: 'Arrange display',
-            onPressed: c.image == null ? null : () => setState(() => _editing = true),
+            onPressed: c.image == null
+                ? null
+                : () => setState(() => _editing = true),
             icon: const _EditLayoutIcon(),
           ),
         ],
@@ -376,8 +386,9 @@ class _ViewerPageState extends State<ViewerPage> {
                 final Rect r = el == 'clock'
                     ? clockRect(size, data)
                     : scaleRect(size, data);
-                final double margin =
-                    el == 'clock' ? 0 : 6 * size.shortestSide / 360;
+                final double margin = el == 'clock'
+                    ? 0
+                    : 6 * size.shortestSide / 360;
                 final double freeW = size.width - 2 * margin - r.width;
                 final double freeH = size.height - 2 * margin - r.height;
                 final Offset delta = d.localPosition - _dragStartLocal;
@@ -408,8 +419,11 @@ class _ViewerPageState extends State<ViewerPage> {
                 final (int x, int y) = toSensor(d.localPosition);
                 p = c.addMeasurePoint(x, y);
                 if (p == null) {
-                  _toast('At most ${ProbeController.maxMeasurePoints} '
-                      'points', '');
+                  _toast(
+                    'At most ${ProbeController.maxMeasurePoints} '
+                        'points',
+                    '',
+                  );
                   return;
                 }
               }
@@ -471,8 +485,7 @@ class _ViewerPageState extends State<ViewerPage> {
   }
 
   Widget _toolbar() {
-    final bool ready =
-        c.streaming && c.image != null && !c.calibrationPending;
+    final bool ready = c.streaming && c.image != null && !c.calibrationPending;
     final bool recording = capture.recording;
     final Duration d = capture.recordingDuration;
     const Color gold = Color(0xFFD4A84B);
@@ -504,28 +517,67 @@ class _ViewerPageState extends State<ViewerPage> {
         children: <Widget>[
           SizedBox(
             height: 32,
-            child: recording
-                ? Center(
-                    child: Text(
-                      '● ${d.inMinutes.toString().padLeft(2, '0')}:'
-                      '${(d.inSeconds % 60).toString().padLeft(2, '0')}',
-                      style: const TextStyle(
-                        color: Colors.redAccent,
-                        fontSize: 15,
-                        fontWeight: FontWeight.w600,
-                        fontFeatures: <FontFeature>[
-                          FontFeature.tabularFigures(),
-                        ],
+            child: Stack(
+              alignment: Alignment.center,
+              children: <Widget>[
+                if (recording)
+                  Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: <Widget>[
+                      Text(
+                        '● ${d.inMinutes.toString().padLeft(2, '0')}:'
+                        '${(d.inSeconds % 60).toString().padLeft(2, '0')}',
+                        style: const TextStyle(
+                          color: Colors.redAccent,
+                          fontSize: 15,
+                          fontWeight: FontWeight.w600,
+                          fontFeatures: <FontFeature>[
+                            FontFeature.tabularFigures(),
+                          ],
+                        ),
                       ),
-                    ),
+                      const SizedBox(width: 8),
+                      Icon(
+                        capture.recordingAudio ? Icons.mic : Icons.mic_off,
+                        size: 16,
+                        color: capture.recordingAudio
+                            ? Colors.redAccent
+                            : Colors.white38,
+                        semanticLabel: capture.recordingAudio
+                            ? 'Recording sound'
+                            : 'No sound',
+                      ),
+                    ],
                   )
-                : Row(
+                else
+                  Row(
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: <Widget>[
                       modeLabel('PHOTO', false),
                       modeLabel('VIDEO', true),
                     ],
                   ),
+                // Sound on/off, only in video mode; the microphone
+                // permission is asked for when it is first switched on.
+                if (_videoMode && !recording)
+                  Align(
+                    alignment: Alignment.centerRight,
+                    child: IconButton(
+                      visualDensity: VisualDensity.compact,
+                      padding: EdgeInsets.zero,
+                      iconSize: 22,
+                      tooltip: capture.recordAudio
+                          ? 'Sound on: tap to record without sound'
+                          : 'Sound off: tap to record sound',
+                      onPressed: _toggleAudio,
+                      icon: Icon(
+                        capture.recordAudio ? Icons.mic : Icons.mic_off,
+                        color: capture.recordAudio ? gold : Colors.white54,
+                      ),
+                    ),
+                  ),
+              ],
+            ),
           ),
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceEvenly,
@@ -833,7 +885,11 @@ class _EditLayoutIcon extends StatelessWidget {
           Positioned(
             left: 0,
             top: 0,
-            child: Icon(Icons.settings_outlined, color: Colors.white70, size: 22),
+            child: Icon(
+              Icons.settings_outlined,
+              color: Colors.white70,
+              size: 22,
+            ),
           ),
           Positioned(
             right: 0,

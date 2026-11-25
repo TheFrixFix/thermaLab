@@ -25,7 +25,8 @@ class CaptureService extends ChangeNotifier {
   CaptureService(this.controller, this.csv, this.camera) {
     controller.frameTick.addListener(_onFrame);
     liveServer.onCommand = _onRemoteCommand;
-    liveServer.csvRowsProvider = (int from) => (csv.fileName, csv.rowsFrom(from));
+    liveServer.csvRowsProvider = (int from) =>
+        (csv.fileName, csv.rowsFrom(from));
     liveServer.csvProvider = () async {
       final String? content = await csv.currentContent();
       final String? name = csv.fileName;
@@ -47,6 +48,13 @@ class CaptureService extends ChangeNotifier {
   final Stopwatch _sinceVideoFrame = Stopwatch();
   bool _videoFrameBusy = false;
   static const Duration _videoFrameInterval = Duration(milliseconds: 66);
+
+  /// Whether videos get a microphone sound track. The permission is asked
+  /// for only when this is switched on.
+  bool recordAudio = false;
+
+  /// Whether the running recording has sound.
+  bool recordingAudio = false;
 
   Duration get recordingDuration => _recordStart == null
       ? Duration.zero
@@ -74,6 +82,7 @@ class CaptureService extends ChangeNotifier {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     remoteControl = prefs.getBool('remoteControl') ?? false;
     streamFps = prefs.getInt('streamFps') ?? 15;
+    recordAudio = prefs.getBool('recordAudio') ?? false;
     notifyListeners();
     if (prefs.getBool('streaming') ?? false) await setStreaming(true);
   }
@@ -83,6 +92,29 @@ class CaptureService extends ChangeNotifier {
     notifyListeners();
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     await prefs.setBool('remoteControl', on);
+  }
+
+  /// Switches the video sound track. Switching it on asks for the
+  /// microphone permission; returns an error message if it was refused.
+  Future<String?> setRecordAudio(bool on) async {
+    if (on && !await _micPermission()) {
+      return 'No microphone permission. Allow it for thermaLab in the '
+          'Android settings to record sound.';
+    }
+    recordAudio = on;
+    notifyListeners();
+    final SharedPreferences prefs = await SharedPreferences.getInstance();
+    await prefs.setBool('recordAudio', on);
+    return null;
+  }
+
+  Future<bool> _micPermission() async {
+    try {
+      return await _video.invokeMethod<bool>('micPermission') ?? false;
+    } catch (e) {
+      debugPrint('[capture] microphone permission failed: $e');
+      return false;
+    }
   }
 
   Future<void> setStreamFps(int fps) async {
@@ -156,15 +188,20 @@ class CaptureService extends ChangeNotifier {
           !await Gal.requestAccess(toAlbum: true)) {
         return 'No permission to save to the gallery';
       }
+      // Granted earlier, but the user may have revoked it since.
+      final bool audio = recordAudio && await _micPermission();
       final Directory dir = await getTemporaryDirectory();
       _videoSize = _outputSize(data);
       _videoPath = '${dir.path}/thermal_${_fileStamp(DateTime.now())}.mp4';
-      await _video.invokeMethod<void>('start', <String, Object>{
-        'path': _videoPath!,
-        'width': _videoSize.width.round(),
-        'height': _videoSize.height.round(),
-        'fps': 15,
-      });
+      recordingAudio =
+          await _video.invokeMethod<bool>('start', <String, Object>{
+            'path': _videoPath!,
+            'width': _videoSize.width.round(),
+            'height': _videoSize.height.round(),
+            'fps': 15,
+            'audio': audio,
+          }) ??
+          false;
       _recordStart = DateTime.now();
       _sinceVideoFrame
         ..reset()
@@ -175,6 +212,9 @@ class CaptureService extends ChangeNotifier {
         (_) => notifyListeners(),
       );
       notifyListeners();
+      if (recordAudio && !recordingAudio) {
+        return 'Recording without sound: the microphone is not available';
+      }
       return null;
     } catch (e) {
       _recordStart = null;
@@ -186,6 +226,7 @@ class CaptureService extends ChangeNotifier {
   Future<String?> stopRecording() async {
     if (!recording) return null;
     _recordStart = null;
+    recordingAudio = false;
     _recordTicker?.cancel();
     _recordTicker = null;
     notifyListeners();
@@ -242,9 +283,10 @@ class CaptureService extends ChangeNotifier {
     if (liveServer.hasViewers) {
       // Frame credit: the camera delivers 25 fps, so a plain minimum
       // interval would round 15 fps down to every second frame (12.5).
-      _streamCredit = (_streamCredit +
-              _sinceStreamFrame.elapsedMicroseconds * streamFps / 1e6)
-          .clamp(0.0, 2.0);
+      _streamCredit =
+          (_streamCredit +
+                  _sinceStreamFrame.elapsedMicroseconds * streamFps / 1e6)
+              .clamp(0.0, 2.0);
       _sinceStreamFrame
         ..reset()
         ..start();

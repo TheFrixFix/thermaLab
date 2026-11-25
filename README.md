@@ -24,8 +24,8 @@ control to any browser in your Wi-Fi.
 - **Automatic shutter correction**, repeated on its own while the camera
   warms up
 - **Lens shading correction** against warmer edges and a cooler centre
-- **Photo and video** (H.264) into the gallery album *thermaLab*, including all
-  markers
+- **Photo and video** (H.264, optional microphone sound) into the gallery
+  album *thermaLab*, including all markers
 - **CSV temperature log** of hottest, coldest, centre and every measurement
   point over time
 - **Live stream in the browser**: a sharp view drawn in the browser itself,
@@ -91,6 +91,7 @@ quickly; the app re-calibrates more often, so expect a few shutter clicks.
 | Control | Action |
 |---|---|
 | **PHOTO / VIDEO** | Chooses what the release button does. |
+| **Microphone** (right of VIDEO, video mode only) | Records sound with videos on or off. The first time you switch it on, Android asks for microphone access; the app never asks otherwise. During a recording a small microphone next to the time shows whether sound is being recorded. |
 | **Release button** | White: takes a photo (a short flash confirms it). Red dot: starts a video; a red square stops it, the elapsed time shows above. Photos and videos include all markers and go to the gallery album *thermaLab*. |
 | **Shutter** | Closes the shutter and re-calibrates the image. Use it if the picture gets streaky or after big temperature changes. Greyed out for cameras that calibrate on their own (P2 Pro). |
 | **Settings** | Scale, shutter, temperature log, live stream and diagnostics. |
@@ -208,6 +209,8 @@ preview line shows the resulting name. The **?** button lists all placeholders:
   from the browser too.
 - **Shutter**: automatic shutter, lens shading correction, *Measure lens
   shading*
+- **Video**: record sound (same switch as the microphone button on the main
+  screen)
 - **Temperature log**: CSV logging and interval
 - **Live stream**: stream on/off, remote control, frame rate, address
 - **Advanced → Diagnostics**: raw sensor data, model options, manual

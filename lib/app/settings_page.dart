@@ -27,9 +27,12 @@ class SettingsPage extends StatelessWidget {
   Widget build(BuildContext context) {
     final ProbeController c = controller;
     return ListenableBuilder(
-      listenable: Listenable.merge(
-        <Listenable>[c, capture, capture.csv, overlay.camera],
-      ),
+      listenable: Listenable.merge(<Listenable>[
+        c,
+        capture,
+        capture.csv,
+        overlay.camera,
+      ]),
       builder: (BuildContext context, _) => Scaffold(
         appBar: AppBar(title: const Text('Settings')),
         body: ListView(
@@ -93,74 +96,91 @@ class SettingsPage extends StatelessWidget {
                 onTap: c.resetFlatField,
               ),
             if (kCameraOverlayEnabled) ...<Widget>[
-            const _Section('Camera overlay'),
-            ListTile(
-              title: const Text('Calibrate overlay'),
-              subtitle: Text(
-                overlay.camera.calibrated == null
-                    ? 'Not calibrated yet'
-                    : 'Calibrated (match '
-                          '${(overlay.camera.calibrated!.score * 100).round()} %)',
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () => Navigator.of(context).push(
-                MaterialPageRoute<void>(
-                  builder: (_) => OverlayCalibrationPage(
-                    controller: c,
-                    overlay: overlay,
+              const _Section('Camera overlay'),
+              ListTile(
+                title: const Text('Calibrate overlay'),
+                subtitle: Text(
+                  overlay.camera.calibrated == null
+                      ? 'Not calibrated yet'
+                      : 'Calibrated (match '
+                            '${(overlay.camera.calibrated!.score * 100).round()} %)',
+                ),
+                trailing: const Icon(Icons.chevron_right),
+                onTap: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) =>
+                        OverlayCalibrationPage(controller: c, overlay: overlay),
                   ),
                 ),
               ),
-            ),
-            ListTile(
-              title: const Text('Overlay style'),
-              subtitle: Padding(
-                padding: const EdgeInsets.only(top: 8),
-                child: SegmentedButton<OverlayMode>(
-                  showSelectedIcon: false,
-                  segments: const <ButtonSegment<OverlayMode>>[
-                    ButtonSegment<OverlayMode>(
-                      value: OverlayMode.edges,
-                      label: Text('Edges'),
-                    ),
-                    ButtonSegment<OverlayMode>(
-                      value: OverlayMode.blend,
-                      label: Text('Blend'),
-                    ),
-                  ],
-                  selected: <OverlayMode>{overlay.camera.mode},
-                  onSelectionChanged: (Set<OverlayMode> v) =>
-                      overlay.camera.setMode(v.first),
+              ListTile(
+                title: const Text('Overlay style'),
+                subtitle: Padding(
+                  padding: const EdgeInsets.only(top: 8),
+                  child: SegmentedButton<OverlayMode>(
+                    showSelectedIcon: false,
+                    segments: const <ButtonSegment<OverlayMode>>[
+                      ButtonSegment<OverlayMode>(
+                        value: OverlayMode.edges,
+                        label: Text('Edges'),
+                      ),
+                      ButtonSegment<OverlayMode>(
+                        value: OverlayMode.blend,
+                        label: Text('Blend'),
+                      ),
+                    ],
+                    selected: <OverlayMode>{overlay.camera.mode},
+                    onSelectionChanged: (Set<OverlayMode> v) =>
+                        overlay.camera.setMode(v.first),
+                  ),
                 ),
               ),
-            ),
-            ListTile(
-              title: Text(
-                overlay.camera.mode == OverlayMode.edges
-                    ? 'Edge strength'
-                    : 'Camera share',
-              ),
-              subtitle: Slider(
-                value: overlay.camera.strength,
-                onChanged: overlay.camera.setStrength,
-              ),
-            ),
-            SwitchListTile(
-              title: const Text('Follow distance (parallax)'),
-              subtitle: const Text(
-                'Keeps re-aligning while you move, since the two cameras '
-                'are about 10 cm apart.',
-              ),
-              value: overlay.camera.liveAlign,
-              onChanged: overlay.camera.setLiveAlign,
-            ),
-            if (overlay.camera.calibrated != null)
               ListTile(
-                title: const Text('Reset overlay calibration'),
-                leading: const Icon(Icons.restart_alt),
-                onTap: overlay.camera.resetCalibration,
+                title: Text(
+                  overlay.camera.mode == OverlayMode.edges
+                      ? 'Edge strength'
+                      : 'Camera share',
+                ),
+                subtitle: Slider(
+                  value: overlay.camera.strength,
+                  onChanged: overlay.camera.setStrength,
+                ),
               ),
+              SwitchListTile(
+                title: const Text('Follow distance (parallax)'),
+                subtitle: const Text(
+                  'Keeps re-aligning while you move, since the two cameras '
+                  'are about 10 cm apart.',
+                ),
+                value: overlay.camera.liveAlign,
+                onChanged: overlay.camera.setLiveAlign,
+              ),
+              if (overlay.camera.calibrated != null)
+                ListTile(
+                  title: const Text('Reset overlay calibration'),
+                  leading: const Icon(Icons.restart_alt),
+                  onTap: overlay.camera.resetCalibration,
+                ),
             ],
+            const _Section('Video'),
+            SwitchListTile(
+              secondary: Icon(capture.recordAudio ? Icons.mic : Icons.mic_off),
+              title: const Text('Record sound'),
+              subtitle: const Text(
+                'Adds the microphone to videos. Asks for the microphone '
+                'permission when switched on. Also on the mic button next '
+                'to VIDEO on the main screen.',
+              ),
+              value: capture.recordAudio,
+              onChanged: (bool on) async {
+                final String? error = await capture.setRecordAudio(on);
+                if (error != null && context.mounted) {
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(error)));
+                }
+              },
+            ),
             const _Section('Temperature log'),
             SwitchListTile(
               title: const Text('CSV logging'),
@@ -201,9 +221,9 @@ class SettingsPage extends StatelessWidget {
               onChanged: (bool on) async {
                 final String? error = await capture.setStreaming(on);
                 if (error != null && context.mounted) {
-                  ScaffoldMessenger.of(context).showSnackBar(
-                    SnackBar(content: Text(error)),
-                  );
+                  ScaffoldMessenger.of(
+                    context,
+                  ).showSnackBar(SnackBar(content: Text(error)));
                 }
               },
             ),
@@ -321,7 +341,9 @@ Future<void> measureLensShading(BuildContext context, ProbeController c) async {
   if (go != true) return;
   final String message = await c.calibrateFlatField();
   if (context.mounted) {
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(SnackBar(content: Text(message)));
   }
 }
 
@@ -390,10 +412,7 @@ class _TemperatureSettings extends StatelessWidget {
                 'fixedMin',
                 unit.toCelsius(v.start.roundToDouble()),
               );
-              c.applySetting(
-                'fixedMax',
-                unit.toCelsius(v.end.roundToDouble()),
-              );
+              c.applySetting('fixedMax', unit.toCelsius(v.end.roundToDouble()));
             },
           ),
         ListTile(
