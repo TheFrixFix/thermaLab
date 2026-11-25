@@ -162,7 +162,7 @@ class EditPanel extends StatelessWidget {
           ),
           if (c.scaleStyle == ScaleStyle.simple)
             _Section(
-              title: 'Colour bar unit',
+              title: 'Colour bar unit location',
               children: <Widget>[
                 for (final (ScaleUnit v, String name)
                     in const <(ScaleUnit, String)>[

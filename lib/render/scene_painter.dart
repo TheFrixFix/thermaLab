@@ -517,15 +517,17 @@ void _paintScale(Canvas canvas, Size size, SceneData data, double unit) {
   );
 }
 
-/// A text in a dark rounded pill, as used by the simple colour bar.
+/// A text on a dark plate with slightly rounded corners, as used by the
+/// simple colour bar.
 class _Pill {
-  _Pill(this.text, this.rect);
+  _Pill(this.text, this.rect, this.radius);
   final TextPainter text;
   final Rect rect;
+  final double radius;
 
   void paint(Canvas canvas) {
     canvas.drawRRect(
-      RRect.fromRectAndRadius(rect, Radius.circular(rect.height / 2)),
+      RRect.fromRectAndRadius(rect, Radius.circular(radius)),
       Paint()..color = const Color(0xB3000000),
     );
     text.paint(canvas, rect.center - Offset(text.width / 2, text.height / 2));
@@ -539,14 +541,14 @@ class _SimpleScaleGeometry {
   final _Pill high;
   final _Pill low;
 
-  /// Unit pill, null when the unit is inside the limits or hidden.
+  /// Unit plate, null when the unit is inside the limits or hidden.
   final _Pill? unit;
 }
 
-/// Simple colour bar: the bar between its upper and lower limit, each in a
-/// pill, and the unit where [SceneData.scaleUnit] puts it. All parts are
-/// centred on the bar except a unit beside it, which sits on the side
-/// facing the image centre.
+/// Simple colour bar: the bar between its upper and lower limit, each on a
+/// plate, and the unit where [SceneData.scaleUnit] puts it. Everything is
+/// right-aligned, so a unit beside the bar uses the room under the wider
+/// limit plates and sits flush against the bar.
 _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
   final double u = _unit(size);
   final ScaleUnit where = data.scaleUnit;
@@ -564,81 +566,73 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
   final TextPainter lowText = limit(data.scaleLow);
   final TextPainter? unitText = inPills || where == ScaleUnit.hidden
       ? null
-      : _text('°C', 11 * u, Colors.white, weight: FontWeight.w500);
+      : _text('°C', 14 * u, Colors.white, weight: FontWeight.w600);
 
   final double padX = 6 * u;
   final double padY = 2.5 * u;
   final double gap = 3 * u;
+  final double radius = 3 * u;
   final double pillW = math.max(highText.width, lowText.width) + 2 * padX;
   final double pillH = highText.height + 2 * padY;
   final Size unitPill = unitText == null
       ? Size.zero
-      : Size(unitText.width + 2 * padX * 0.8, unitText.height + 2 * padY * 0.8);
-  final double barW = 9 * u;
-  final double barH = math.min(size.height * 0.36, 140 * u);
+      : Size(unitText.width + 2 * padX * 0.8, unitText.height + 2 * padY);
+  final double barW = 12 * u;
+  final double barH = math.min(size.height * 0.44, 180 * u);
 
-  // Extents left and right of the bar centre, and the stack from top down.
-  final bool unitLeft = data.layout.scalePos.dx >= 0.5;
-  double left = math.max(pillW, barW) / 2;
-  double right = left;
-  if (where == ScaleUnit.side && unitText != null) {
-    final double reach = barW / 2 + gap + unitPill.width;
-    if (unitLeft) {
-      left = math.max(left, reach);
-    } else {
-      right = math.max(right, reach);
-    }
-  }
+  final double w = math.max(
+    pillW,
+    where == ScaleUnit.side
+        ? barW + unitPill.width
+        : math.max(barW, unitPill.width),
+  );
   final double above = where == ScaleUnit.above ? unitPill.height + gap : 0;
   final double below = where == ScaleUnit.below ? unitPill.height + gap : 0;
   final double h = above + pillH + gap + barH + gap + pillH + below;
 
-  final Rect box = _place(size, data.layout.scalePos, left + right, h, 6 * u);
-  final double cx = box.left + left;
-  final Rect highRect = Rect.fromCenter(
-    center: Offset(cx, box.top + above + pillH / 2),
-    width: pillW,
-    height: pillH,
+  final Rect box = _place(size, data.layout.scalePos, w, h, 6 * u);
+  final double right = box.right;
+  final Rect highRect = Rect.fromLTWH(
+    right - pillW,
+    box.top + above,
+    pillW,
+    pillH,
   );
   final Rect bar = Rect.fromLTWH(
-    cx - barW / 2,
+    right - barW,
     highRect.bottom + gap,
     barW,
     barH,
   );
-  final Rect lowRect = Rect.fromCenter(
-    center: Offset(cx, bar.bottom + gap + pillH / 2),
-    width: pillW,
-    height: pillH,
+  final Rect lowRect = Rect.fromLTWH(
+    right - pillW,
+    bar.bottom + gap,
+    pillW,
+    pillH,
   );
-  _Pill? unitPillAt(Offset center) => unitText == null
+  _Pill? unitPillAt(double rightEdge, double centreY) => unitText == null
       ? null
       : _Pill(
           unitText,
-          Rect.fromCenter(
-            center: center,
-            width: unitPill.width,
-            height: unitPill.height,
+          Rect.fromLTWH(
+            rightEdge - unitPill.width,
+            centreY - unitPill.height / 2,
+            unitPill.width,
+            unitPill.height,
           ),
+          radius,
         );
   final _Pill? unitP = switch (where) {
-    ScaleUnit.side => unitPillAt(
-      Offset(
-        unitLeft
-            ? bar.left - gap - unitPill.width / 2
-            : bar.right + gap + unitPill.width / 2,
-        bar.center.dy,
-      ),
-    ),
-    ScaleUnit.above => unitPillAt(Offset(cx, box.top + unitPill.height / 2)),
-    ScaleUnit.below => unitPillAt(Offset(cx, box.bottom - unitPill.height / 2)),
+    ScaleUnit.side => unitPillAt(bar.left, bar.center.dy),
+    ScaleUnit.above => unitPillAt(right, box.top + unitPill.height / 2),
+    ScaleUnit.below => unitPillAt(right, box.bottom - unitPill.height / 2),
     ScaleUnit.inPills || ScaleUnit.hidden => null,
   };
   return _SimpleScaleGeometry(
     box,
     bar,
-    _Pill(highText, highRect),
-    _Pill(lowText, lowRect),
+    _Pill(highText, highRect, radius),
+    _Pill(lowText, lowRect, radius),
     unitP,
   );
 }

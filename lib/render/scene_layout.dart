@@ -84,7 +84,7 @@ class SceneLayout {
 /// with its lower and upper limit.
 enum ScaleStyle { detailed, simple }
 
-/// Where the simple colour bar shows the unit: beside the bar halfway up,
+/// Where the simple colour bar shows the unit: left of the bar halfway up,
 /// above the upper limit, below the lower limit, after both limits, or not
 /// at all. Leaving it out of the limits lets them be drawn larger.
 enum ScaleUnit { side, above, below, inPills, hidden }
