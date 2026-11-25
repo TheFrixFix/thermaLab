@@ -8,7 +8,9 @@ Flutter app (Android) for InfiRay USB thermal cameras. Read only the doc you nee
 - `docs/development.md`: build, signing, on-device debugging
 - `README.md`: user-facing features and usage only
 
-Check: `flutter test`. Build: `flutter build apk --release --target-platform android-arm64`.
+While working: `flutter analyze` and `flutter test` (fast). Analyze must add no new issues; the `package:flutter/material.dart` deprecation infos are known, leave them. Build the APK once at the end, it is slow: `flutter build apk --release --target-platform android-arm64`.
+
+`packages/flutter_ffi_uvc/` is a vendored USB plugin, mostly third-party C, kept out of search by `.ignore`. The app only uses it through `uvc_camera_api.dart`; read `FORK.md` before changing it. Never read `flutter_ffi_uvc_bindings_generated.dart` (generated).
 
 ## Keep the docs current
 
