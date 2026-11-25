@@ -16,28 +16,20 @@ import '../t2s/shutter_correction.dart';
 import '../t2s/t2s_commands.dart';
 import '../t2s/t2s_frame.dart';
 import '../t2s/temperature_model.dart';
-import '../t2s/tiny1c_commands.dart';
+import 'camera_connection.dart';
 import 'frame_processor.dart';
 import 'measure_point.dart';
+import 'probe_state.dart';
 import 'snapshot_export.dart';
 import 'view_settings.dart';
 
+export 'camera_connection.dart' show kKnownV2UsbIds, usbId;
 export 'frame_processor.dart' show DisplaySource, FrameStats;
 export 'measure_point.dart' show MeasurePoint;
 
-/// USB IDs of cameras known to be T2S+ V2 units.
-final Set<String> kKnownV2UsbIds = <String>{
-  for (final KnownCamera c in kKnownCameras)
-    if (c.revision == HardwareRevision.v2) c.usbId,
-};
-
-String usbId(int vendorId, int productId) =>
-    '${vendorId.toRadixString(16).padLeft(4, '0')}:'
-    '${productId.toRadixString(16).padLeft(4, '0')}';
-
 class ProbeController extends ChangeNotifier {
   ProbeController() {
-    _deviceEventsSub = _camera.deviceEvents.listen((UvcDeviceEvent event) {
+    _deviceEventsSub = _connection.camera.deviceEvents.listen((UvcDeviceEvent event) {
       log('USB ${event.type.name}: ${event.device.displayName} '
           '(${usbId(event.device.vendorId, event.device.productId)})');
       if (event.type == UvcDeviceEventType.detached &&
@@ -50,32 +42,44 @@ class ProbeController extends ChangeNotifier {
         refreshDevices();
       }
     });
-    _streamErrorSub = _camera.streamErrors.listen((UvcStreamError e) {
+    _streamErrorSub = _connection.camera.streamErrors.listen((UvcStreamError e) {
       log('Stream error: ${e.message}');
     });
   }
 
-  final UvcCamera _camera = uvcCamera;
   StreamSubscription<UvcDeviceEvent>? _deviceEventsSub;
   StreamSubscription<UvcStreamError>? _streamErrorSub;
 
-  // Connection state.
-  List<UvcUsbDevice> devices = <UvcUsbDevice>[];
-  UvcUsbDevice? device;
-  List<UvcCameraMode> modes = <UvcCameraMode>[];
-  UvcCameraMode? mode;
-  bool get streaming => _pollTimer != null;
-  bool busy = false;
-  String status = 'Not connected';
+  /// Model settings, busy flag, status line and log, shared by the parts.
+  late final ProbeState _state = ProbeState(notify: notifyListeners);
+  ModelSettings get settings => _state.settings;
+  set settings(ModelSettings value) => _state.settings = value;
+  bool get busy => _state.busy;
+  set busy(bool value) => _state.busy = value;
+  String get status => _state.status;
+  set status(String value) => _state.status = value;
+  List<String> get logLines => _state.logLines;
+  void log(String message) => _state.log(message);
 
-  // Processing state.
-  // Wall measurements (2026-11-06): with the closed shutter anchored at the
-  // model level, taking the shutter temperature from the sensor reads about
-  // 5 °C above the shutter register, matching the vendor app.
-  ModelSettings settings = const ModelSettings(
-    revision: HardwareRevision.v2,
-    shutterSource: ShutterSource.fpa,
+  /// USB devices, the open camera, frame polling and commands.
+  late final CameraConnection _connection = CameraConnection(
+    state: _state,
+    onFrame: _process,
   );
+  List<UvcUsbDevice> get devices => _connection.devices;
+  UvcUsbDevice? get device => _connection.device;
+  List<UvcCameraMode> get modes => _connection.modes;
+  UvcCameraMode? get mode => _connection.mode;
+  bool get streaming => _connection.streaming;
+  CameraFamily get family => _connection.family;
+  KnownCamera? get knownModel => _connection.knownModel;
+  String get cameraName => _connection.cameraName;
+  bool get canTriggerShutter => _connection.canTriggerShutter;
+  T2sFrame? get frame => _connection.frame;
+  double get fps => _connection.fps;
+  int get framesReceived => _connection.framesReceived;
+  int get undecodableFrames => _connection.undecodableFrames;
+  String get lastFrameInfo => _connection.lastFrameInfo;
 
   /// Display settings and their preferences.
   late final ViewSettings _view = ViewSettings(
@@ -122,47 +126,21 @@ class ProbeController extends ChangeNotifier {
   static const double markerHysteresis = FrameProcessor.markerHysteresis;
   static const double markerSmoothing = FrameProcessor.markerSmoothing;
   ShutterCorrection? correction;
-  T2sFrame? frame;
   Uint16List? get processedCounts => _processor.processedCounts;
   TemperatureTable? get table => _processor.table;
   FrameStats? get stats => _processor.stats;
   ui.Image? image;
   (int, int)? point;
-  double fps = 0;
-  int framesReceived = 0;
-  int undecodableFrames = 0;
-  String lastFrameInfo = '';
 
-  final List<String> logLines = <String>[];
-
-  Timer? _pollTimer;
   int _ticksAtLastStats = 0;
-  int _lastSequence = -1;
-  final Stopwatch _fpsWatch = Stopwatch();
-  int _fpsFrames = 0;
   bool _rendering = false;
   bool _holdShutter = false;
 
   /// A shutter correction has been attempted since connecting.
   bool _correctionAttempted = false;
 
-  /// Stream layout of the connected camera.
-  CameraFamily family = CameraFamily.xtherm;
-
-  /// Catalogue entry of the connected camera, null if unknown.
-  KnownCamera? knownModel;
-
-  /// Display name of the connected camera.
-  String cameraName = '';
-
   /// Xtherm camera of unknown revision: decided from the first frames.
   bool _revisionPending = false;
-
-  late final Tiny1cCommands _tiny1c = Tiny1cCommands(_camera.controlTransfer);
-
-  /// Whether the app can trigger the camera's shutter (Tiny1-C modules
-  /// calibrate on their own and offer no known command for it).
-  bool get canTriggerShutter => family == CameraFamily.xtherm;
 
   /// True while a V2 camera streams but has no shutter reference yet: the
   /// image would still show the raw stripes, so it is not shown.
@@ -194,39 +172,12 @@ class ProbeController extends ChangeNotifier {
   /// Minimum time between two automatic shutter corrections.
   static const Duration minReNucInterval = Duration(seconds: 20);
 
-  void log(String message) {
-    final DateTime now = DateTime.now();
-    final String ts =
-        '${now.hour.toString().padLeft(2, '0')}:'
-        '${now.minute.toString().padLeft(2, '0')}:'
-        '${now.second.toString().padLeft(2, '0')}';
-    logLines.add('$ts $message');
-    if (logLines.length > 300) logLines.removeAt(0);
-    debugPrint('[probe] $message');
-    notifyListeners();
-  }
-
   // ---------------------------------------------------------------------
   // Devices
   // ---------------------------------------------------------------------
 
-  Future<void> refreshDevices() async {
-    try {
-      devices = await _camera.listUsbDevices();
-      for (final UvcUsbDevice d in devices) {
-        log('Found ${d.displayName} ${usbId(d.vendorId, d.productId)} '
-            'manufacturer="${d.manufacturerName}" product="${d.productName}" '
-            'serial="${d.serialNumber}"');
-      }
-      if (devices.isEmpty) log('No UVC device found');
-    } catch (e) {
-      log('Listing devices failed: $e');
-    }
-    notifyListeners();
-  }
+  Future<void> refreshDevices() => _connection.refreshDevices();
 
-  /// Lists devices and connects right away when exactly one known T2S+
-  /// (or exactly one camera at all) is attached.
   Future<void> loadPreferences() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     _view.load(prefs);
@@ -279,17 +230,15 @@ class ProbeController extends ChangeNotifier {
   /// viewer, which colours the image itself.
   Int16List? temperatureGrid() => _processor.temperatureGrid();
 
+  /// Lists devices and connects right away when exactly one known T2S+
+  /// (or exactly one camera at all) is attached.
   Future<void> autoConnect() async {
     await refreshDevices();
     if (streaming || busy) return;
-    final List<UvcUsbDevice> known = devices
-        .where((UvcUsbDevice d) =>
-            knownCamera(usbId(d.vendorId, d.productId)) != null)
-        .toList();
-    final List<UvcUsbDevice> pick = known.isNotEmpty ? known : devices;
-    if (pick.length == 1) {
-      log('Auto-connecting to ${pick.first.displayName}');
-      await connect(pick.first);
+    final UvcUsbDevice? pick = _connection.autoConnectCandidate();
+    if (pick != null) {
+      log('Auto-connecting to ${pick.displayName}');
+      await connect(pick);
     }
   }
 
@@ -300,63 +249,19 @@ class ProbeController extends ChangeNotifier {
     notifyListeners();
     try {
       await disconnect(keepLog: true);
-      device = target;
-      final String id = usbId(target.vendorId, target.productId);
-      final KnownCamera? known = knownCamera(id);
-      knownModel = known;
-      log('Opening $id (${known?.name ?? 'model not in the catalogue'})');
-      // Android requires CAMERA before it grants USB access to a UVC device.
-      final bool cameraGranted = await _camera.ensureCameraPermission();
-      log('Camera permission ${cameraGranted ? 'granted' : 'DENIED'}');
-      if (!cameraGranted) {
-        status = 'Camera permission denied';
-        return;
-      }
-      await _camera.openUsbDevice(target.deviceId);
-      log('USB device opened');
-
-      modes = _camera.supportedModes();
-      for (final UvcCameraMode m in modes) {
-        log('Mode: ${m.label} (format ${m.frameFormat})');
-      }
-      final StreamChoice? choice = chooseStream(<OfferedMode>[
-        for (int i = 0; i < modes.length; i++)
-          OfferedMode(modes[i].formatName, modes[i].width, modes[i].height, i),
-      ], known);
-      if (choice == null) {
-        status = 'Camera not supported';
-        log('No supported stream layout among the offered modes');
-        return;
-      }
-      mode = modes[choice.modeIndex];
-      family = choice.family;
-      log('Protocol ${family.name}: ${choice.reason}');
+      final StreamChoice? choice = await _connection.open(target);
+      if (choice == null) return;
       if (family == CameraFamily.tiny1c) {
         // The module corrects itself; nothing to wait for.
         settings = settings.copyWith(revision: HardwareRevision.v1);
         _revisionPending = false;
         _correctionAttempted = true;
-        cameraName = known?.name ?? 'Tiny1-C thermal camera';
       } else {
-        final HardwareRevision? rev = known?.revision;
+        final HardwareRevision? rev = knownModel?.revision;
         _revisionPending = rev == null;
         if (rev != null) settings = settings.copyWith(revision: rev);
-        cameraName = known?.name ?? 'Xtherm thermal camera';
       }
-      log('Starting ${mode!.label}');
-      final UvcPreviewStartResult result = await _camera.startPreview(
-        mode!,
-        policy: UvcPreviewPolicy.sequenceOnly,
-        timeout: const Duration(seconds: 6),
-      );
-      log('Preview start: success=${result.success} '
-          'frames=${result.validFrameCount} errors=${result.errorCount} '
-          '${result.lastError ?? ''}');
-      if (!result.success) {
-        status = 'Stream did not start';
-        return;
-      }
-      _startPolling();
+      if (!await _connection.startStream()) return;
       _connectedFor
         ..reset()
         ..start();
@@ -368,7 +273,7 @@ class ProbeController extends ChangeNotifier {
       if (family == CameraFamily.xtherm) {
         sendCommand(T2sCommand.rawMode, 'raw mode');
       } else {
-        await _setupTiny1c();
+        await _connection.setupTiny1c();
       }
     } catch (e) {
       status = 'Connect failed';
@@ -423,34 +328,15 @@ class ProbeController extends ChangeNotifier {
         '${pixelNoise.toStringAsFixed(1)} counts)');
   }
 
-  Future<void> _setupTiny1c() async {
-    try {
-      await _tiny1c.setEmissivity(0.95);
-      log('Tiny1-C: emissivity 0.95');
-    } catch (e) {
-      log('Tiny1-C setup command failed: $e');
-    }
-  }
-
   Future<void> disconnect({bool keepLog = false}) async {
-    _pollTimer?.cancel();
-    _pollTimer = null;
+    _connection.stopPolling();
     _holdShutter = false;
-    try {
-      if (_camera.isPreviewing) await _camera.stopPreview();
-      if (_camera.openedDeviceId != null) await _camera.closeUsbDevice();
-    } catch (e) {
-      log('Disconnect: $e');
-    }
-    frame = null;
+    await _connection.close();
     _correctionAttempted = false;
     _revisionPending = false;
     _processor.reset();
     image = null;
     correction = null;
-    framesReceived = 0;
-    undecodableFrames = 0;
-    _lastSequence = -1;
     status = 'Not connected';
     if (!keepLog) logLines.clear();
     notifyListeners();
@@ -460,62 +346,17 @@ class ProbeController extends ChangeNotifier {
   // Commands
   // ---------------------------------------------------------------------
 
-  bool sendCommand(int value, String label, {bool quiet = false}) {
-    try {
-      final Stopwatch sw = Stopwatch()..start();
-      _camera.setControl(UvcControlId.zoomAbs, value);
-      final int ms = sw.elapsedMilliseconds;
-      if (!quiet) log('Sent $label (0x${value.toRadixString(16)}) in $ms ms');
-      if (quiet && ms > 100) {
-        debugPrint('[probe] slow control transfer $label: $ms ms');
-      }
-      return true;
-    } catch (e) {
-      log('Command $label (0x${value.toRadixString(16)}) failed: $e');
-      return false;
-    }
-  }
+  bool sendCommand(int value, String label, {bool quiet = false}) =>
+      _connection.sendCommand(value, label, quiet: quiet);
 
-  void triggerShutter() => sendCommand(T2sCommand.shutter, 'shutter');
+  void triggerShutter() => _connection.triggerShutter();
 
-  void setRange(MeasurementRange range) {
-    if (family == CameraFamily.tiny1c) {
-      // High gain = normal range, low gain = high temperature range.
-      _tiny1c
-          .setHighGain(range == MeasurementRange.normal)
-          .then((_) => log('Tiny1-C: range ${range.name}'))
-          .catchError((Object e) => log('Tiny1-C range command failed: $e'));
-    } else {
-      sendCommand(
-        range == MeasurementRange.high
-            ? T2sCommand.rangeHigh
-            : T2sCommand.rangeNormal,
-        'range ${range.name}',
-      );
-    }
-    settings = settings.copyWith(range: range);
-    notifyListeners();
-  }
+  void setRange(MeasurementRange range) => _connection.setRange(range);
 
   /// Writes emissivity 0.95, 20 °C ambient/reflected, 1 m distance and
   /// commits them. Needed once on units that still report emissivity 0.02.
-  Future<void> writeDefaultParameters() async {
-    final List<(String, List<int>)> writes = <(String, List<int>)>[
-      ('emissivity 0.95', encodeFloat(T2sParameter.emissivity, 0.95)),
-      ('reflected 20 °C', encodeFloat(T2sParameter.reflectedTemp, 20)),
-      ('air 20 °C', encodeFloat(T2sParameter.airTemp, 20)),
-      ('distance 1 m', encodeUint16(T2sParameter.distance, 1)),
-    ];
-    for (final (String label, List<int> words) in writes) {
-      bool ok = true;
-      for (final int w in words) {
-        ok &= sendCommand(w, label, quiet: true);
-        await Future<void>.delayed(const Duration(milliseconds: 20));
-      }
-      log('Parameter $label ${ok ? 'sent' : 'FAILED'}');
-    }
-    sendCommand(T2sCommand.saveParameters, 'save parameters');
-  }
+  Future<void> writeDefaultParameters() =>
+      _connection.writeDefaultParameters();
 
   /// Closes the shutter, waits until the picture stops changing and
   /// averages several frames into a per-pixel reference (V2 only).
@@ -885,47 +726,6 @@ class ProbeController extends ChangeNotifier {
   // Frame loop
   // ---------------------------------------------------------------------
 
-  void _startPolling() {
-    _fpsWatch
-      ..reset()
-      ..start();
-    _fpsFrames = 0;
-    _pollTimer = Timer.periodic(
-      const Duration(milliseconds: 40),
-      (_) => _poll(),
-    );
-  }
-
-  void _poll() {
-    final UvcRawFrame? raw = _camera.copyLatestRawFrame();
-    if (raw == null || raw.sequence == _lastSequence) return;
-    _lastSequence = raw.sequence;
-    framesReceived++;
-    _fpsFrames++;
-    if (_fpsWatch.elapsedMilliseconds > 1000) {
-      fps = _fpsFrames * 1000 / _fpsWatch.elapsedMilliseconds;
-      _fpsFrames = 0;
-      _fpsWatch
-        ..reset()
-        ..start();
-    }
-    lastFrameInfo =
-        'format ${raw.frameFormat}, ${raw.width}x${raw.height}, '
-        '${raw.bytes.length} bytes, seq ${raw.sequence}';
-    final T2sFrame? decoded = family == CameraFamily.tiny1c
-        ? T2sFrame.decodeTiny1c(raw.bytes, raw.width, raw.height)
-        : T2sFrame.decode(raw.bytes, raw.width, raw.height);
-    if (decoded == null) {
-      undecodableFrames++;
-      if (undecodableFrames == 1 || undecodableFrames % 100 == 0) {
-        log('Cannot decode frame: $lastFrameInfo');
-      }
-      return;
-    }
-    frame = decoded;
-    _process(decoded);
-  }
-
   void _process(T2sFrame f) {
     // While the shutter is closed the picture shows only the shutter; keep
     // the last image on screen like commercial cameras do.
@@ -1054,7 +854,7 @@ class ProbeController extends ChangeNotifier {
   @override
   void dispose() {
     frameTick.dispose();
-    _pollTimer?.cancel();
+    _connection.stopPolling();
     _deviceEventsSub?.cancel();
     _streamErrorSub?.cancel();
     image?.dispose();
