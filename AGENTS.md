@@ -22,4 +22,4 @@ After finishing a feature or change, update the docs in the same commit:
 - Level of detail: name folders, files and central classes; say what each is for and why it is built that way. Leave out methods, fields, setting keys, constants and line numbers: they change too often. Exception: exact values that are external contracts (camera commands, frame and wire formats) belong in `docs/cameras.md` and `docs/web-protocol.md`.
 - Replace or delete outdated text instead of appending to it.
 - Developer detail goes in `docs/`, never in `README.md`.
-- `test/docs_test.dart` fails when a source file is missing from `docs/architecture.md` or a named path or class no longer exists. It can't check that descriptions are still true; that is on you.
+- `test/docs_test.dart` fails when a source file is missing from `docs/architecture.md` or a named path or class no longer exists. It reads every capitalised word and every `name()` in backticks as a code name that must exist in the source, so write other terms (PATH, JSON, tool names) without backticks. It can't check that descriptions are still true; that is on you.
