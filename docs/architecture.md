@@ -19,7 +19,7 @@ VisibleCamera + OverlayEngine   phone-camera overlay, switched off
 
 Everything visible is drawn from one `SceneData`, so screen, photo, video and
 stream always match. Settings persist through `shared_preferences`: display
-and camera settings in `ProbeController` (`loadPreferences()`), capture, log
+and camera settings in `ProbeController`, capture, log
 and stream settings in `CaptureService` and `CsvLogger`.
 
 ## Files
@@ -34,7 +34,7 @@ and stream settings in `CaptureService` and `CsvLogger`.
 | `shutter_correction.dart` | V2 software shutter (non-uniformity) correction |
 | `flat_field.dart` | Lens shading correction |
 | `lib/probe/` | |
-| `probe_controller.dart` | **Central state** (~1500 lines): connection, frame loop, stats, measurement points, display settings, preferences |
+| `probe_controller.dart` | **Central state**, the largest file: connection, frame loop, stats, measurement points, display settings, preferences |
 | `probe_page.dart` | Diagnostics screen |
 | `lib/render/` | |
 | `scene_painter.dart` | `SceneData`, `SceneMarker`, `ScenePainter`: draws a frame with all overlays |
@@ -51,7 +51,7 @@ and stream settings in `CaptureService` and `CsvLogger`.
 | `capture_service.dart` | Photo, video, stream, remote commands from the browser; method channel `t2s_thermal/video` |
 | `csv_logger.dart` | CSV temperature log |
 | `live_server.dart` | HTTP and WebSocket server, see [web-protocol.md](web-protocol.md) |
-| `lib/overlay/` | Phone-camera overlay (edges or blend, automatic alignment), switched off in `overlay_feature.dart`: too slow, and with the cameras ~10 cm apart and no depth data one calibration fits one distance only |
+| `lib/overlay/` | Phone-camera overlay (edges or blend, automatic alignment), switched off in `overlay_feature.dart`: too slow, and with the cameras ~10 cm apart and no depth data one calibration fits one distance only. `visible_camera.dart` (phone camera), `alignment.dart` (image matching), `overlay_engine.dart` (calibration and tracking) |
 | `assets/web/index.html` | Browser viewer, one file, no external resources |
 | `android/app/src/main/kotlin/…/` | `MainActivity.kt` (channel), `VideoEncoder.kt` (H.264) |
 | `packages/flutter_ffi_uvc/` | Vendored libuvc plugin; changes listed in its `FORK.md` |
