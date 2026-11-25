@@ -312,7 +312,10 @@ test/         unit tests
 
 ### Building
 
-Requirements: Flutter 3.35 or newer, Android SDK 36, NDK 27.0.12077973.
+Requirements: Flutter 3.50 or newer, Android SDK 36, NDK 27.0.12077973 and
+JDK 21 or newer (Android Studio 2026.2 bundles one, which Flutter uses). The
+Gradle wrapper fetches Gradle 9.5, the Android Gradle Plugin 9.3 and Kotlin
+2.4 on the first build.
 
 ```bash
 flutter pub get
