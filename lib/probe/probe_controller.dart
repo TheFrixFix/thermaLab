@@ -20,6 +20,7 @@ import 'camera_connection.dart';
 import 'frame_processor.dart';
 import 'measure_point.dart';
 import 'probe_state.dart';
+import 'shutter_control.dart';
 import 'snapshot_export.dart';
 import 'view_settings.dart';
 
@@ -125,7 +126,14 @@ class ProbeController extends ChangeNotifier {
 
   static const double markerHysteresis = FrameProcessor.markerHysteresis;
   static const double markerSmoothing = FrameProcessor.markerSmoothing;
-  ShutterCorrection? correction;
+
+  /// Shutter correction, its automatic repetition and revision detection.
+  late final ShutterControl _shutter = ShutterControl(
+    state: _state,
+    connection: _connection,
+    dropImage: () => image = null,
+  );
+  ShutterCorrection? get correction => _shutter.correction;
   Uint16List? get processedCounts => _processor.processedCounts;
   TemperatureTable? get table => _processor.table;
   FrameStats? get stats => _processor.stats;
@@ -134,43 +142,20 @@ class ProbeController extends ChangeNotifier {
 
   int _ticksAtLastStats = 0;
   bool _rendering = false;
-  bool _holdShutter = false;
-
-  /// A shutter correction has been attempted since connecting.
-  bool _correctionAttempted = false;
-
-  /// Xtherm camera of unknown revision: decided from the first frames.
-  bool _revisionPending = false;
 
   /// True while a V2 camera streams but has no shutter reference yet: the
   /// image would still show the raw stripes, so it is not shown.
-  bool get calibrationPending =>
-      streaming &&
-      family == CameraFamily.xtherm &&
-      (_revisionPending ||
-          (settings.revision == HardwareRevision.v2 &&
-              correction == null &&
-              !_correctionAttempted));
+  bool get calibrationPending => _shutter.calibrationPending;
 
   /// Repeat the shutter correction on its own as the camera drifts.
-  bool autoShutter = true;
+  bool get autoShutter => _shutter.autoShutter;
 
   /// Anchor corrected frames at the model's shutter level (true) or at the
   /// reference mean (false, the IR-Py-Thermal behaviour).
-  bool anchorToModel = true;
-  double _correctionFpa = double.nan;
-  final Stopwatch _correctionAge = Stopwatch();
-  final Stopwatch _connectedFor = Stopwatch();
+  bool get anchorToModel => _shutter.anchorToModel;
 
-  /// The shutter takes a moment to open again; frames in that window still
-  /// show the shutter and are not displayed.
-  final Stopwatch _shutterReleased = Stopwatch();
-
-  /// Sensor temperature change that triggers a new shutter correction.
-  static const double reNucFpaDelta = 0.3;
-
-  /// Minimum time between two automatic shutter corrections.
-  static const Duration minReNucInterval = Duration(seconds: 20);
+  static const double reNucFpaDelta = ShutterControl.reNucFpaDelta;
+  static const Duration minReNucInterval = ShutterControl.minReNucInterval;
 
   // ---------------------------------------------------------------------
   // Devices
@@ -181,7 +166,7 @@ class ProbeController extends ChangeNotifier {
   Future<void> loadPreferences() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
     _view.load(prefs);
-    autoShutter = prefs.getBool('autoShutter') ?? true;
+    _shutter.loadPreferences(prefs);
     notifyListeners();
   }
 
@@ -251,20 +236,9 @@ class ProbeController extends ChangeNotifier {
       await disconnect(keepLog: true);
       final StreamChoice? choice = await _connection.open(target);
       if (choice == null) return;
-      if (family == CameraFamily.tiny1c) {
-        // The module corrects itself; nothing to wait for.
-        settings = settings.copyWith(revision: HardwareRevision.v1);
-        _revisionPending = false;
-        _correctionAttempted = true;
-      } else {
-        final HardwareRevision? rev = knownModel?.revision;
-        _revisionPending = rev == null;
-        if (rev != null) settings = settings.copyWith(revision: rev);
-      }
+      _shutter.prepareFor(family, knownModel);
       if (!await _connection.startStream()) return;
-      _connectedFor
-        ..reset()
-        ..start();
+      _shutter.streamStarted();
       await _loadCalibration();
       status = 'Streaming';
       notifyListeners();
@@ -288,55 +262,20 @@ class ProbeController extends ChangeNotifier {
     // V1 cameras correct themselves and only need a shutter click.
     await Future<void>.delayed(const Duration(milliseconds: 1500));
     if (!streaming) return;
-    if (_revisionPending) {
-      _detectRevision();
+    if (_shutter.revisionPending) {
+      _shutter.detectRevision();
       await _loadCalibration();
     }
-    if (settings.revision == HardwareRevision.v2) {
-      await runShutterCorrection();
-    } else {
-      triggerShutter();
-      _correctionAttempted = true;
-      notifyListeners();
-    }
-  }
-
-  /// Uncorrected V2 frames show strong pixel-to-pixel stripes, frames a V1
-  /// camera has corrected itself do not.
-  void _detectRevision() {
-    final T2sFrame? f = frame;
-    _revisionPending = false;
-    if (f == null) {
-      settings = settings.copyWith(revision: HardwareRevision.v2);
-      log('No frame to judge the revision; assuming V2');
-      return;
-    }
-    double sum = 0;
-    int n = 0;
-    for (int y = 0; y < f.height; y += 2) {
-      final int row = y * f.width;
-      for (int x = 1; x < f.width; x++) {
-        sum += (f.counts[row + x] - f.counts[row + x - 1]).abs();
-        n++;
-      }
-    }
-    final double pixelNoise = sum / n;
-    final HardwareRevision rev =
-        pixelNoise > 40 ? HardwareRevision.v2 : HardwareRevision.v1;
-    settings = settings.copyWith(revision: rev);
-    log('Revision ${rev.name} detected (pixel-to-pixel noise '
-        '${pixelNoise.toStringAsFixed(1)} counts)');
+    await _shutter.correctAfterConnect();
   }
 
   Future<void> disconnect({bool keepLog = false}) async {
     _connection.stopPolling();
-    _holdShutter = false;
+    _shutter.releaseHold();
     await _connection.close();
-    _correctionAttempted = false;
-    _revisionPending = false;
+    _shutter.reset();
     _processor.reset();
     image = null;
-    correction = null;
     status = 'Not connected';
     if (!keepLog) logLines.clear();
     notifyListeners();
@@ -360,171 +299,13 @@ class ProbeController extends ChangeNotifier {
 
   /// Closes the shutter, waits until the picture stops changing and
   /// averages several frames into a per-pixel reference (V2 only).
-  ///
-  /// Uncorrected V2 frames carry a strong sensor gradient and column
-  /// stripes that stay when the shutter is closed, so "uniform" cannot be
-  /// tested directly. Instead: the picture jumps when the shutter moves in,
-  /// then holds still. The difference to the open picture is logged as
-  /// evidence that the shutter really closed.
-  Future<void> runShutterCorrection() async {
-    if (family == CameraFamily.tiny1c) {
-      log('Tiny1-C cameras run their shutter calibration on their own');
-      return;
-    }
-    if (settings.revision == HardwareRevision.v1) {
-      triggerShutter();
-      return;
-    }
-    if (busy || frame == null) return;
-    busy = true;
-    status = 'Shutter correction…';
-    notifyListeners();
-    try {
-      final T2sFrame open = frame!;
-      _holdShutter = true;
-      unawaited(_keepShutterClosed());
+  Future<void> runShutterCorrection() => _shutter.runShutterCorrection();
 
-      final Stopwatch settle = Stopwatch()..start();
-      Uint16List? previous;
-      int stable = 0;
-      double change = double.nan;
-      while (settle.elapsed < const Duration(seconds: 8)) {
-        await Future<void>.delayed(const Duration(milliseconds: 150));
-        final T2sFrame? f = frame;
-        if (f == null || identical(f.counts, previous)) continue;
-        if (previous != null) {
-          change = blockStdDev(_diff(f.counts, previous), f.width, f.height);
-        }
-        final double vsOpen =
-            blockStdDev(_diff(f.counts, open.counts), f.width, f.height);
-        debugPrint('[probe]   t=${settle.elapsedMilliseconds} ms '
-            'change=${change.toStringAsFixed(1)} '
-            'vsOpen=${vsOpen.toStringAsFixed(1)} '
-            'mean=${countsMean(f.counts).toStringAsFixed(1)}');
-        previous = f.counts;
-        final bool still = change.isFinite && change < 4.0;
-        stable = settle.elapsedMilliseconds > 600 && still ? stable + 1 : 0;
-        if (stable >= 3) break;
-      }
-      final T2sFrame closed = frame!;
-      final double vsOpen = blockStdDev(
-        _diff(closed.counts, open.counts),
-        closed.width,
-        closed.height,
-      );
-      final double meanShift =
-          countsMean(closed.counts) - countsMean(open.counts);
-      log('Shutter ${stable >= 3 ? 'settled' : 'NOT settled'} after '
-          '${settle.elapsedMilliseconds} ms; closed vs open: structure '
-          '${vsOpen.toStringAsFixed(1)}, mean shift '
-          '${meanShift.toStringAsFixed(1)}');
+  void setAnchorToModel(bool value) => _shutter.setAnchorToModel(value);
 
-      final List<Uint16List> refs = <Uint16List>[];
-      final Stopwatch collect = Stopwatch()..start();
-      while (refs.length < 15 &&
-          collect.elapsed < const Duration(seconds: 5)) {
-        await Future<void>.delayed(const Duration(milliseconds: 30));
-        final T2sFrame? f = frame;
-        if (f == null) continue;
-        if (refs.isNotEmpty && identical(refs.last, f.counts)) continue;
-        refs.add(f.counts);
-      }
-      if (refs.length < 5) {
-        log('Shutter correction failed: only ${refs.length} frames '
-            'in ${collect.elapsedMilliseconds} ms');
-        return;
-      }
-      correction = ShutterCorrection.fromFrames(
-        refs,
-        closed.width,
-        closed.height,
-      );
-      _correctionFpa = closed.meta!.fpaTemp(closed.profile!);
-      _correctionAge
-        ..reset()
-        ..start();
-      log('Reference from ${refs.length} frames, mean '
-          '${correction!.referenceMean.toStringAsFixed(1)}, '
-          '${correction!.deadPixels.length} dead pixels');
-    } catch (e) {
-      log('Shutter correction failed: $e');
-    } finally {
-      _holdShutter = false;
-      if (!_correctionAttempted) {
-        // The last rendered image is still the raw, striped one; drop it so
-        // the loading screen stays until the first corrected frame. (Not
-        // disposed here: a pending paint may still hold it.)
-        image = null;
-      }
-      _correctionAttempted = true;
-      _shutterReleased
-        ..reset()
-        ..start();
-      busy = false;
-      status = 'Streaming';
-      notifyListeners();
-    }
-  }
+  Future<void> setAutoShutter(bool value) => _shutter.setAutoShutter(value);
 
-  static Int32List _diff(Uint16List a, Uint16List b) {
-    final Int32List out = Int32List(a.length);
-    for (int i = 0; i < a.length; i++) {
-      out[i] = a[i] - b[i];
-    }
-    return out;
-  }
-
-  Future<void> _keepShutterClosed() async {
-    while (_holdShutter) {
-      sendCommand(T2sCommand.shutter, 'shutter', quiet: true);
-      await Future<void>.delayed(const Duration(milliseconds: 400));
-    }
-  }
-
-  /// V2 frames drift as the camera warms up. Take a new reference when the
-  /// sensor temperature moved, or after a while: every minute during the
-  /// first five minutes, every three minutes after that.
-  void _maybeReNuc(T2sFrame f) {
-    if (!autoShutter ||
-        busy ||
-        correction == null ||
-        settings.revision != HardwareRevision.v2) {
-      return;
-    }
-    final T2sMetadata? meta = f.meta;
-    if (meta == null) return;
-    final double fpa = meta.fpaTemp(f.profile!);
-    final Duration interval = _connectedFor.elapsed < const Duration(minutes: 5)
-        ? const Duration(minutes: 1)
-        : const Duration(minutes: 3);
-    final bool fpaMoved =
-        _correctionFpa.isFinite && (fpa - _correctionFpa).abs() > reNucFpaDelta;
-    final bool tooOld = _correctionAge.elapsed > interval;
-    // While the camera warms up right after plugging in, the sensor moves
-    // fast; never click the shutter more often than this.
-    final bool tooSoon = _correctionAge.elapsed < minReNucInterval;
-    if (!tooSoon && (fpaMoved || tooOld)) {
-      log('Auto shutter correction (${fpaMoved ? 'sensor ${_correctionFpa.toStringAsFixed(2)} → ${fpa.toStringAsFixed(2)} °C' : 'after ${_correctionAge.elapsed.inSeconds} s'})');
-      unawaited(runShutterCorrection());
-    }
-  }
-
-  void setAnchorToModel(bool value) {
-    anchorToModel = value;
-    log('Shutter anchor: ${value ? 'model level' : 'reference mean'}');
-  }
-
-  Future<void> setAutoShutter(bool value) async {
-    autoShutter = value;
-    log('Auto shutter correction ${value ? 'on' : 'off'}');
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setBool('autoShutter', value);
-  }
-
-  void clearShutterCorrection() {
-    correction = null;
-    log('Shutter correction cleared');
-  }
+  void clearShutterCorrection() => _shutter.clearShutterCorrection();
 
   // ---------------------------------------------------------------------
   // Model settings and calibration
@@ -727,14 +508,7 @@ class ProbeController extends ChangeNotifier {
   // ---------------------------------------------------------------------
 
   void _process(T2sFrame f) {
-    // While the shutter is closed the picture shows only the shutter; keep
-    // the last image on screen like commercial cameras do.
-    if (_holdShutter || _shutterReleased.isRunning &&
-        _shutterReleased.elapsed < const Duration(milliseconds: 800)) {
-      return;
-    }
-    _shutterReleased.stop();
-    _maybeReNuc(f);
+    if (!_shutter.handleFrame(f)) return;
     final ({Uint16List shown, bool byTemperature}) result = _processor.process(
       f,
       settings: settings,
