@@ -22,6 +22,7 @@ import '../t2s/temperature_model.dart';
 import '../t2s/tiny1c_commands.dart';
 import 'frame_processor.dart';
 import 'measure_point.dart';
+import 'view_settings.dart';
 
 export 'frame_processor.dart' show DisplaySource, FrameStats;
 export 'measure_point.dart' show MeasurePoint;
@@ -77,15 +78,24 @@ class ProbeController extends ChangeNotifier {
     revision: HardwareRevision.v2,
     shutterSource: ShutterSource.fpa,
   );
-  DisplaySource displaySource = DisplaySource.temperature;
-  Palette palette = Palette.iron;
 
-  /// Clockwise quarter turns applied to the displayed image.
-  int quarterTurns = 1;
-
-  /// Smallest temperature span the colour scale is stretched over, so a
-  /// uniform scene does not turn into colourful sensor noise.
-  double minSpan = 10.0;
+  /// Display settings and their preferences.
+  late final ViewSettings _view = ViewSettings(
+    notify: notifyListeners,
+    setAutoShutter: setAutoShutter,
+  );
+  DisplaySource get displaySource => _view.displaySource;
+  Palette get palette => _view.palette;
+  int get quarterTurns => _view.quarterTurns;
+  double get minSpan => _view.minSpan;
+  bool get fixedScale => _view.fixedScale;
+  double get fixedMin => _view.fixedMin;
+  double get fixedMax => _view.fixedMax;
+  SceneLayout get layout => _view.layout;
+  int get viewTurns => _view.viewTurns;
+  int get labelOutline => _view.labelOutline;
+  bool get flatFieldEnabled => _view.flatFieldEnabled;
+  bool get mirror => _view.mirror;
 
   /// User measurement points in sensor coordinates.
   final MeasurePoints _points = MeasurePoints();
@@ -103,28 +113,8 @@ class ProbeController extends ChangeNotifier {
   double get scaleLow => _processor.scaleLow;
   double get scaleHigh => _processor.scaleHigh;
 
-  /// Fixed colour scale instead of following the scene.
-  bool fixedScale = false;
-  double fixedMin = 15;
-  double fixedMax = 40;
-
-  /// Which overlay elements are shown and where clock and scale sit.
-  SceneLayout layout = const SceneLayout();
-
-  /// Clockwise quarter turns of the whole display (image, scale, clock and
-  /// markers together) on the phone screen, for portrait or landscape use.
-  /// Photos, videos and the stream keep the reading orientation.
-  int viewTurns = 0;
-
-  /// Outline around marker labels: 0 shadow only, 1 normal, 2 thick.
-  int labelOutline = 1;
-
   /// Lens shading correction measured on a uniform surface (per camera).
   FlatField? flatField;
-  bool flatFieldEnabled = true;
-
-  /// Flip the thermal image horizontally (after rotation).
-  bool mirror = false;
 
   /// Hottest/coldest marker positions in sensor pixels, smoothed so they
   /// glide instead of jumping across evenly warm areas.
@@ -241,132 +231,27 @@ class ProbeController extends ChangeNotifier {
   /// (or exactly one camera at all) is attached.
   Future<void> loadPreferences() async {
     final SharedPreferences prefs = await SharedPreferences.getInstance();
-    quarterTurns = prefs.getInt('quarterTurns') ?? 1;
-    minSpan = prefs.getDouble('minSpan') ?? 10.0;
+    _view.load(prefs);
     autoShutter = prefs.getBool('autoShutter') ?? true;
-    fixedScale = prefs.getBool('fixedScale') ?? false;
-    fixedMin = prefs.getDouble('fixedMin') ?? 15;
-    fixedMax = prefs.getDouble('fixedMax') ?? 40;
-    final String? layoutJson = prefs.getString('layout');
-    final int? oldCorner = prefs.getInt('timestampCorner');
-    layout = layoutJson != null
-        ? SceneLayout.fromJson(jsonDecode(layoutJson) as Map<String, dynamic>)
-        : (oldCorner != null
-              ? SceneLayout.fromTimestampCorner(oldCorner)
-              : const SceneLayout());
-    labelOutline = prefs.getInt('labelOutline') ?? 1;
-    mirror = prefs.getBool('mirror') ?? false;
-    viewTurns = prefs.getInt('viewTurns') ?? 0;
-    flatFieldEnabled = prefs.getBool('flatFieldEnabled') ?? true;
-    final String? paletteName = prefs.getString('palette');
-    palette = Palette.all.firstWhere(
-      (Palette p) => p.name == paletteName,
-      orElse: () => Palette.iron,
-    );
     notifyListeners();
   }
 
   /// Display settings shared with the web remote.
-  Map<String, Object> viewSettings() => <String, Object>{
-    'palette': palette.name,
-    'quarterTurns': quarterTurns,
-    'minSpan': minSpan,
-    'fixedScale': fixedScale,
-    'fixedMin': fixedMin,
-    'fixedMax': fixedMax,
-    'layout': layout.toJson(),
-    'labelOutline': labelOutline,
-    'autoShutter': autoShutter,
-    'mirror': mirror,
-    'flatField': flatFieldEnabled,
-    'flatFieldCalibrated': flatField != null,
-  };
+  Map<String, Object> viewSettings() => _view.toMap(
+    autoShutter: autoShutter,
+    flatFieldCalibrated: flatField != null,
+  );
 
   /// Applies one display setting by name (from the settings page or the
   /// web remote) and persists it. Unknown keys are ignored.
-  Future<void> applySetting(String key, Object? value) async {
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    double? asDouble() => value is num ? value.toDouble() : null;
-    int? asInt() => value is num ? value.round() : null;
-    switch (key) {
-      case 'palette':
-        final Palette? p = Palette.all
-            .where((Palette p) => p.name == value)
-            .firstOrNull;
-        if (p != null) await setPalette(p);
-        return;
-      case 'quarterTurns':
-        final int? v = asInt();
-        if (v == null) return;
-        quarterTurns = v % 4;
-        await prefs.setInt('quarterTurns', quarterTurns);
-      case 'minSpan':
-        final double? v = asDouble();
-        if (v == null) return;
-        minSpan = v.clamp(0, 50).toDouble();
-        await prefs.setDouble('minSpan', minSpan);
-      case 'fixedScale':
-        if (value is! bool) return;
-        fixedScale = value;
-        await prefs.setBool('fixedScale', value);
-      case 'fixedMin':
-        final double? v = asDouble();
-        if (v == null) return;
-        fixedMin = v;
-        await prefs.setDouble('fixedMin', v);
-      case 'fixedMax':
-        final double? v = asDouble();
-        if (v == null) return;
-        fixedMax = v;
-        await prefs.setDouble('fixedMax', v);
-      case 'layout':
-        if (value is! Map) return;
-        await setLayout(
-          SceneLayout.fromJson(Map<String, dynamic>.from(value), layout),
-        );
-        return;
-      case 'labelOutline':
-        final int? v = asInt();
-        if (v == null) return;
-        labelOutline = v.clamp(0, 2);
-        await prefs.setInt('labelOutline', labelOutline);
-      case 'autoShutter':
-        if (value is bool) await setAutoShutter(value);
-        return;
-      case 'flatField':
-        if (value is! bool) return;
-        flatFieldEnabled = value;
-        await prefs.setBool('flatFieldEnabled', value);
-      case 'viewTurns':
-        final int? v = asInt();
-        if (v == null) return;
-        viewTurns = v % 4;
-        await prefs.setInt('viewTurns', viewTurns);
-      case 'mirror':
-        if (value is! bool) return;
-        mirror = value;
-        await prefs.setBool('mirror', value);
-      default:
-        return;
-    }
-    notifyListeners();
-  }
+  Future<void> applySetting(String key, Object? value) =>
+      _view.apply(key, value);
 
   /// Changes the overlay layout; [persist] false while dragging.
-  Future<void> setLayout(SceneLayout value, {bool persist = true}) async {
-    layout = value;
-    notifyListeners();
-    if (!persist) return;
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString('layout', jsonEncode(value.toJson()));
-  }
+  Future<void> setLayout(SceneLayout value, {bool persist = true}) =>
+      _view.setLayout(value, persist: persist);
 
-  Future<void> setMinSpan(double value) async {
-    minSpan = value;
-    notifyListeners();
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setDouble('minSpan', value);
-  }
+  Future<void> setMinSpan(double value) => _view.setMinSpan(value);
 
   // ---------------------------------------------------------------------
   // Measurement points
@@ -818,24 +703,12 @@ class ProbeController extends ChangeNotifier {
     _loadCalibration();
   }
 
-  void setDisplaySource(DisplaySource source) {
-    displaySource = source;
-    notifyListeners();
-  }
+  void setDisplaySource(DisplaySource source) =>
+      _view.setDisplaySource(source);
 
-  Future<void> setPalette(Palette p) async {
-    palette = p;
-    notifyListeners();
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setString('palette', p.name);
-  }
+  Future<void> setPalette(Palette p) => _view.setPalette(p);
 
-  Future<void> rotate() async {
-    quarterTurns = (quarterTurns + 1) % 4;
-    notifyListeners();
-    final SharedPreferences prefs = await SharedPreferences.getInstance();
-    await prefs.setInt('quarterTurns', quarterTurns);
-  }
+  Future<void> rotate() => _view.rotate();
 
   void setPoint((int, int)? p) {
     point = p;
@@ -1073,12 +946,7 @@ class ProbeController extends ChangeNotifier {
       flatFieldEnabled: flatFieldEnabled,
       point: point,
       displaySource: displaySource,
-      scale: (
-        fixedScale: fixedScale,
-        fixedMin: fixedMin,
-        fixedMax: fixedMax,
-        minSpan: minSpan,
-      ),
+      scale: _view.scale,
     );
 
     if (framesReceived % 75 == 0) {
