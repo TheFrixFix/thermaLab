@@ -25,9 +25,11 @@ shutter switch in `ShutterControl`, capture, log and stream settings in
 
 ### Inside `ProbeController`
 
-`ProbeController` is the only class the rest of the app uses. It is a thin
-`ChangeNotifier` that owns the parts in `lib/probe/`, forwards its public
-members to them and runs the two sequences that need several parts:
+The rest of the app imports only `probe_controller.dart`, which re-exports
+the few types callers need (`FrameStats`, `MeasurePoint`, …).
+`ProbeController` is a thin `ChangeNotifier` that owns the parts in
+`lib/probe/`, forwards its public members to them and runs the two sequences
+that need several parts:
 
 ```
 CameraConnection ──T2sFrame──▶ ShutterControl ──▶ FrameProcessor ──▶ ui.Image
@@ -95,7 +97,7 @@ tested: they need neither Flutter nor USB. The rest needs the camera, since
 | `assets/web/index.html` | Browser viewer, one file, no external resources |
 | `android/app/src/main/kotlin/…/` | `MainActivity.kt` (channel), `VideoEncoder.kt` (H.264) |
 | `packages/flutter_ffi_uvc/` | Vendored libuvc plugin; changes listed in its `FORK.md` |
-| `test/` | Unit tests, mostly for `lib/t2s/`, `lib/render/` and `frame_processor.dart`; `t2s_fixture.dart` builds fake frames |
+| `test/` | Unit tests, mostly for `lib/t2s/`, `lib/render/`, `frame_processor.dart` and the revision check in `shutter_control.dart`; `t2s_fixture.dart` builds fake frames |
 | `tools/make_icon.py` | Generates the app icon |
 
 ## Where to change things
