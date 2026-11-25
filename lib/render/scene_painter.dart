@@ -659,10 +659,11 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
 
 void _paintSimpleScale(Canvas canvas, Size size, SceneData data, double unit) {
   final _SimpleScaleGeometry g = _simpleScaleGeometry(size, data);
-  final RRect bar = RRect.fromRectAndRadius(g.bar, Radius.zero);
-  canvas.drawRRect(bar, _barPaint(g.bar, data.palette));
-  canvas.drawRRect(
-    bar,
+  canvas.drawRect(g.bar, _barPaint(g.bar, data.palette));
+  // The border lies inside the bar, so its outer edge lines up with the
+  // plates instead of sticking out by half the stroke.
+  canvas.drawRect(
+    g.bar.deflate(0.5 * unit),
     Paint()
       ..style = PaintingStyle.stroke
       ..strokeWidth = 1 * unit

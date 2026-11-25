@@ -622,8 +622,10 @@ function drawSimpleScale(h, unit, layout, where) {
     g.addColorStop(i / 15, `rgb(${lut[k * 3]},${lut[k * 3 + 1]},${lut[k * 3 + 2]})`);
   }
   ctx.fillStyle = g;
-  roundRect(right - barW, by, barW, barH, 0); ctx.fill();
-  ctx.lineWidth = unit; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.stroke();
+  ctx.fillRect(right - barW, by, barW, barH);
+  // Border inside the bar, so its outer edge lines up with the plates.
+  ctx.lineWidth = unit; ctx.strokeStyle = 'rgba(0,0,0,.5)';
+  ctx.strokeRect(right - barW + unit / 2, by + unit / 2, barW - unit, barH - unit);
   plate(hi, right, pos.y + above + pillH / 2, pillW, pillH, limitSize, [false, true]);
   plate(lo, right, by + barH + pillH / 2, pillW, pillH, limitSize, [true, false]);
   if (!hasUnit) return;
