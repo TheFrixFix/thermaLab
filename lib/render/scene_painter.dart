@@ -568,7 +568,8 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
       ? null
       : _text('°C', 14 * u, Colors.white, weight: FontWeight.w600);
 
-  final double padX = 6 * u;
+  // Same padding for limits and unit.
+  final double padX = 4.8 * u;
   final double padY = 2.5 * u;
   final double gap = 3 * u;
   final double radius = 3 * u;
@@ -576,7 +577,7 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
   final double pillH = highText.height + 2 * padY;
   final Size unitPill = unitText == null
       ? Size.zero
-      : Size(unitText.width + 2 * padX * 0.8, unitText.height + 2 * padY);
+      : Size(unitText.width + 2 * padX, unitText.height + 2 * padY);
   final double barW = 12 * u;
   final double barH = math.min(size.height * 0.44, 180 * u);
 
@@ -588,7 +589,8 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
   );
   final double above = where == ScaleUnit.above ? unitPill.height + gap : 0;
   final double below = where == ScaleUnit.below ? unitPill.height + gap : 0;
-  final double h = above + pillH + gap + barH + gap + pillH + below;
+  // The limit plates touch the bar.
+  final double h = above + pillH + barH + pillH + below;
 
   final Rect box = _place(size, data.layout.scalePos, w, h, 6 * u);
   final double right = box.right;
@@ -600,13 +602,13 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
   );
   final Rect bar = Rect.fromLTWH(
     right - barW,
-    highRect.bottom + gap,
+    highRect.bottom,
     barW,
     barH,
   );
   final Rect lowRect = Rect.fromLTWH(
     right - pillW,
-    bar.bottom + gap,
+    bar.bottom,
     pillW,
     pillH,
   );
@@ -639,7 +641,7 @@ _SimpleScaleGeometry _simpleScaleGeometry(Size size, SceneData data) {
 
 void _paintSimpleScale(Canvas canvas, Size size, SceneData data, double unit) {
   final _SimpleScaleGeometry g = _simpleScaleGeometry(size, data);
-  final RRect bar = RRect.fromRectAndRadius(g.bar, Radius.circular(2 * unit));
+  final RRect bar = RRect.fromRectAndRadius(g.bar, Radius.zero);
   canvas.drawRRect(bar, _barPaint(g.bar, data.palette));
   canvas.drawRRect(
     bar,

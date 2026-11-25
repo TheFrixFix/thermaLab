@@ -590,20 +590,20 @@ function drawSimpleScale(h, unit, layout, where) {
   const suffix = inPills ? '°C' : '';
   const hi = h.hi.toFixed(1) + suffix, lo = h.lo.toFixed(1) + suffix;
   ctx.font = font(limitSize);
-  const padX = 6 * unit, padY = 2.5 * unit, gap = 3 * unit, radius = 3 * unit;
+  const padX = 4.8 * unit, padY = 2.5 * unit, gap = 3 * unit, radius = 3 * unit;
   const pillW = Math.max(ctx.measureText(hi).width, ctx.measureText(lo).width) + 2 * padX;
   const pillH = limitSize * 1.2 + 2 * padY;
   const hasUnit = !inPills && where !== 'hidden';
   ctx.font = font(unitSize);
-  const uw = hasUnit ? ctx.measureText('°C').width + 1.6 * padX : 0;
+  const uw = hasUnit ? ctx.measureText('°C').width + 2 * padX : 0;
   const uh = hasUnit ? unitSize * 1.2 + 2 * padY : 0;
   const barW = 12 * unit, barH = Math.min(r.h * 0.44, 180 * unit);
   const w = Math.max(pillW, where === 'side' ? barW + uw : Math.max(barW, uw));
   const above = hasUnit && where === 'above' ? uh + gap : 0;
   const below = hasUnit && where === 'below' ? uh + gap : 0;
-  const total = above + pillH + gap + barH + gap + pillH + below;
+  const total = above + pillH + barH + pillH + below;
   const pos = place(layout.scaleX ?? 1, layout.scaleY ?? 0.5, w, total, 6 * unit);
-  const right = pos.x + w, by = pos.y + above + pillH + gap;
+  const right = pos.x + w, by = pos.y + above + pillH;
   // Plate whose right edge is at x and vertical centre at y.
   const plate = (text, x, y, pw, ph, size) => {
     ctx.fillStyle = 'rgba(0,0,0,.7)';
@@ -618,10 +618,10 @@ function drawSimpleScale(h, unit, layout, where) {
     g.addColorStop(i / 15, `rgb(${lut[k * 3]},${lut[k * 3 + 1]},${lut[k * 3 + 2]})`);
   }
   ctx.fillStyle = g;
-  roundRect(right - barW, by, barW, barH, 2 * unit); ctx.fill();
+  roundRect(right - barW, by, barW, barH, 0); ctx.fill();
   ctx.lineWidth = unit; ctx.strokeStyle = 'rgba(0,0,0,.5)'; ctx.stroke();
   plate(hi, right, pos.y + above + pillH / 2, pillW, pillH, limitSize);
-  plate(lo, right, by + barH + gap + pillH / 2, pillW, pillH, limitSize);
+  plate(lo, right, by + barH + pillH / 2, pillW, pillH, limitSize);
   if (!hasUnit) return;
   if (where === 'side') plate('°C', right - barW, by + barH / 2, uw, uh, unitSize);
   else if (where === 'above') plate('°C', right, pos.y + uh / 2, uw, uh, unitSize);
