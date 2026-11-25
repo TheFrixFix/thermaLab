@@ -54,6 +54,10 @@ adb pair PHONE_IP:PAIRING_PORT
 adb connect PHONE_IP:PORT
 ```
 
+`adb` is in the Android SDK's `platform-tools` folder, which is often not on
+the PATH. The connect port changes whenever wireless debugging restarts
+(screen lock, network change); `adb mdns services` lists the current one.
+
 The app logs to logcat with the prefixes `[probe]`, `[capture]` and
 `[overlay]`; every 75 frames it prints a line with frame rate, sensor and
 shutter temperatures and the centre reading. *Diagnostics → Export* shares a
